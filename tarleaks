@@ -1,0 +1,1396 @@
+#!/usr/bin/env bash
+# =============================================================================
+# tarleaks — everyday commands for a Tarleaks ERP installation.
+#
+#   ./tarleaks start | stop | restart | status
+#   ./tarleaks logs [service]          follow the logs (Ctrl+C to leave)
+#   ./tarleaks update [--to <release>] [--check]
+#                                      move to the newest (or that) release:
+#                                      check, back up, update, start, doctor
+#   ./tarleaks upgrade [version] [--offline]
+#                                      the update's inner step, without checks
+#   ./tarleaks backup [folder]         database + files + .env → backups/
+#   ./tarleaks restore <backup-folder> [--keep-settings]
+#                                      put a backup back (replaces current data;
+#                                      --keep-settings: keep this folder's name,
+#                                      port and address)
+#   ./tarleaks apps                    which apps run, and what each needs
+#   ./tarleaks apps add payroll        add apps (with what they need)
+#   ./tarleaks apps remove crm         remove apps (their data is kept)
+#   ./tarleaks profile small|standard|full   switch to a preset list of apps
+#   ./tarleaks editors [on|off]        the document and diagram editors
+#   ./tarleaks network [local|office]  who may open the ERP: only this computer,
+#                                      or everyone on the network
+#   ./tarleaks offline [on|sealed|off] run without internet (docs/offline.md)
+#   ./tarleaks load-bundle <bundle>    load the images of an offline bundle
+#   ./tarleaks setup-code              print the setup code again
+#   ./tarleaks reset-admin <e-mail> [--company <name>] [--reset-two-factor]
+#                                      an administrator who cannot sign in gets
+#                                      a temporary password (no e-mail needed)
+#   ./tarleaks doctor                  check the installation, explain problems
+#   ./tarleaks doctor --bundle [file]  the same, plus logs and versions, in one
+#                                      file for support (secrets taken out)
+#   ./tarleaks uninstall [--purge]     remove the containers (--purge: data too)
+# =============================================================================
+set -euo pipefail
+cd "$(dirname "$0")"
+# The containers use the outbound proxy in .env only, never this shell's.
+unset HTTPS_PROXY HTTP_PROXY NO_PROXY https_proxy http_proxy no_proxy ALL_PROXY all_proxy
+
+if [ -t 1 ]; then B=$'\033[1m'; G=$'\033[32m'; Y=$'\033[33m'; R=$'\033[31m'; N=$'\033[0m'
+else B=""; G=""; Y=""; R=""; N=""; fi
+ok()   { printf '%s✓%s %s\n' "$G" "$N" "$*"; }
+warn() { printf '%s!%s %s\n' "$Y" "$N" "$*"; }
+bad()  { printf '%s✗%s %s\n' "$R" "$N" "$*"; }
+die()  { bad "$*" >&2; exit 1; }
+
+case "${1:-help}" in
+  load-bundle|help|-h|--help) ;;
+  *) [ -f .env ] || die "No .env here. Run ./install.sh first." ;;
+esac
+env_get() { grep -E "^$1=" .env | tail -1 | cut -d= -f2- || true; }
+env_file_get() { grep -E "^$2=" "$1" | tail -1 | cut -d= -f2- || true; } # file key
+env_del() { # key — remove the line
+  local tmp; tmp=$(mktemp)
+  grep -Ev "^$1=" .env > "$tmp" || true
+  cat "$tmp" > .env && rm -f "$tmp"
+}
+# The installation's name in Docker for a settings file: its
+# COMPOSE_PROJECT_NAME, else the name in docker-compose.yml.
+env_project() {
+  local p; p=$(env_file_get "$1" COMPOSE_PROJECT_NAME | tr -d "\"' \r" | tr '[:upper:]' '[:lower:]')
+  [ -n "$p" ] || p=$(sed -n 's/^name: *//p' docker-compose.yml | head -1)
+  printf '%s' "$p"
+}
+# What `restore --keep-settings` keeps from this folder: where and how this
+# installation runs. Keys and the app list always come from the backup (the
+# data was made with them).
+RESTORE_KEEP_KEYS="COMPOSE_PROJECT_NAME HTTP_PORT HTTP_BIND TARLEAKS_HOST TARLEAKS_URL TARLEAKS_PROFILE_ENV TARLEAKS_TLS ACME_EMAIL CF_DNS_API_TOKEN TARLEAKS_OFFLINE"
+# Kept on EVERY restore: the message queue's account is made once, when this
+# folder's queue volume is first created, and a restore does not touch that
+# volume. The backup's password would lock every service out of the queue.
+RESTORE_ALWAYS_KEEP="RABBITMQ_USER RABBITMQ_PASSWORD"
+# An .env written before the rename has NEXUS_<key> lines. Rename each to
+# TARLEAKS_<key> in place, keeping its value (keys are never regenerated). The
+# containers get both names, so an image pinned before the rename still starts.
+migrate_legacy_keys() {
+  grep -qE '^(# ?)?NEXUS_[A-Z0-9_]+=' .env || return 0
+  local tmp; tmp=$(mktemp)
+  awk '
+    function val(line) { return substr(line, index(line, "=") + 1) }
+    function key(line) { return substr(line, 1, index(line, "=") - 1) }
+    NR == FNR {
+      if ($0 ~ /^TARLEAKS_[A-Z0-9_]+=/) { k = key($0); sub(/^TARLEAKS_/, "", k); has[k] = 1 }
+      if ($0 ~ /^NEXUS_[A-Z0-9_]+=/)    { k = key($0); sub(/^NEXUS_/, "", k); old[k] = val($0) }
+      next
+    }
+    /^TARLEAKS_[A-Z0-9_]+=/ {
+      k = key($0); sub(/^TARLEAKS_/, "", k); v = val($0)
+      if ((v == "" || v == "GENERATED") && (k in old) && old[k] != "") v = old[k]
+      print "TARLEAKS_" k "=" v; next
+    }
+    /^NEXUS_[A-Z0-9_]+=/ {
+      k = key($0); sub(/^NEXUS_/, "", k)
+      if (k in has) next
+      print "TARLEAKS_" k "=" val($0); next
+    }
+    /^# ?NEXUS_[A-Z0-9_]+=/ { sub(/NEXUS_/, "TARLEAKS_"); print; next }
+    { print }
+  ' .env .env > "$tmp"
+  cat "$tmp" > .env && rm -f "$tmp"
+  chmod 600 .env
+  ok "Renamed the NEXUS_* settings in .env to TARLEAKS_* (values unchanged)"
+}
+
+set_env() {
+  local tmp; tmp=$(mktemp)
+  K="$1" V="$2" awk 'BEGIN{k=ENVIRON["K"]; v=ENVIRON["V"]; d=0} index($0, k "=") == 1 {print k"="v; d=1; next} {print} END{if(!d) print k"="v}' .env > "$tmp"
+  cat "$tmp" > .env && rm -f "$tmp"
+}
+port() { local p; p=$(env_get HTTP_PORT); printf '%s' "${p:-80}"; }
+# shellcheck source=scripts/lib-apps.sh
+. scripts/lib-apps.sh
+# shellcheck source=scripts/lib-env.sh
+. scripts/lib-env.sh
+# shellcheck source=scripts/lib-scrub.sh
+. scripts/lib-scrub.sh
+APPS_VERSION=$(env_get TARLEAKS_VERSION)
+
+# The apps this installation runs. An .env from before apps could be chosen has
+# only a hardware profile: read it as that preset.
+current_apps() {
+  local a; a=$(env_get TARLEAKS_APPS)
+  if [ -z "$a" ]; then
+    case "$(env_get COMPOSE_PROFILES)" in
+      *full*) a=$(apps_preset full) ;;
+      *standard*) a=$(apps_preset standard) ;;
+      *) a=$(apps_preset small) ;;
+    esac
+  fi
+  # An app whose image this release does not have (the version was set back)
+  # is left out rather than stopping everything.
+  local late gone
+  late=$(apps_unreleased)
+  if [ -n "$late" ]; then
+    gone=$(_apps_without "$a" "$(_apps_without "$a" "$late")")
+    [ -n "$gone" ] && warn "Release $APPS_VERSION does not have $(apps_names "$gone"); left out, its data kept. On a release that has it again: ./tarleaks apps add $(printf '%s' "$gone" | tr ',' ' ')" >&2
+    a=$(_apps_without "$a" "$late")
+  fi
+  printf '%s' "$a"
+}
+# Write the services to run and the apps to show for a list of chosen apps.
+apply_apps() {
+  local apps closure
+  apps=$(apps_resolve "$1") || exit 1
+  [ -n "$apps" ] || die "At least one app must stay. To remove everything: ./tarleaks uninstall"
+  closure=$(apps_closure "$apps")
+  local had_editor=0
+  case ",$(env_get COMPOSE_PROFILES)," in *,onlyoffice,*) had_editor=1 ;; esac
+  [ -n "$(env_get TARLEAKS_EDITORS)" ] || set_env TARLEAKS_EDITORS on
+  set_env TARLEAKS_APPS "$apps"
+  set_env COMPOSE_PROFILES "$(apps_units "$closure")$(apps_addons "$closure")"
+  set_env TARLEAKS_AVAILABLE_MODULES "$(apps_modules "$closure")"
+  apps_sync_editors "$closure"
+  # An installation from before the editors existed gets them on its next start.
+  if [ "$had_editor" = 0 ]; then
+    case ",$(apps_addon_units "$closure")," in
+      *,onlyoffice,*) warn "The document editor is now part of this installation (New and Edit in Documents): about 2 GB to download and 2 GB of memory. Not wanted on this machine? ./tarleaks editors off" ;;
+    esac
+  fi
+}
+# Recompute from the sheet, so a release that changes what an app needs takes
+# effect on the next start.
+# Secrets a newer kit needs that an older .env does not have yet (1.0.0 has
+# no PROCUREMENT_KEK, for one): without them Compose refuses the whole file.
+# Only missing or GENERATED keys are written, exactly as ./install.sh does;
+# a key that has a value is never replaced.
+fill_new_keys() {
+  local pair k gen cur n=0
+  for pair in POSTGRES_PASSWORD:hex24 RABBITMQ_PASSWORD:hex24 STORAGE_ACCESS_KEY:hex16 \
+      STORAGE_SECRET_KEY:hex32 JWT_SECRET:hex32 CLUSTER_DSN_KEY:b64 INTERNAL_TOKEN:hex32 \
+      PORTAL_JWT_SECRET:hex32 NOTIFICATIONS_KEK:b64 NOTIFICATIONS_UNSUB_SECRET:hex32 \
+      NOTIFICATIONS_OAUTH_SECRET:hex32 HELPDESK_TOKEN_KEY:b64 SUBSCRIPTIONS_KEY_SEAL_KEY:b64 \
+      MARKETPLACE_TOKEN_KEY:b64 INSIGHTS_SOURCE_KEY:b64 PROCUREMENT_KEK:b64 \
+      CONTRACTS_PROVIDER_KEY:b64 ONLYOFFICE_JWT_SECRET:hex32; do
+    k=${pair%%:*}; gen=${pair#*:}
+    cur=$(env_get "$k")
+    [ -z "$cur" ] || [ "$cur" = GENERATED ] || continue
+    case "$gen" in
+      b64) set_env "$k" "$(openssl rand -base64 32 2>/dev/null || head -c 32 /dev/urandom | base64 | tr -d '\n')" ;;
+      hex*) set_env "$k" "$(openssl rand -hex "${gen#hex}" 2>/dev/null || head -c "${gen#hex}" /dev/urandom | od -An -tx1 | tr -d ' \n')" ;;
+    esac
+    n=$((n + 1))
+  done
+  [ "$n" = 0 ] || ok "Added $n setting(s) this kit needs to .env (new keys only; existing values unchanged)"
+  env_signing_keys_note "$(env_fill_signing_keys)"
+}
+
+sync_apps() { apply_apps "$(current_apps)"; sync_compose_files; }
+is_base() { awk -v a="$1" '!/^[[:space:]]*#/ && $1 == a && $2 == "base" {f=1} END {exit !f}' "$APPS_SHEET"; }
+gb() { awk -v m="$1" 'BEGIN { printf "%.1f", m / 1024 }'; }
+
+# Where to knock from this machine: the bound address, or loopback when the
+# gateway listens everywhere.
+probe() {
+  local b; b=$(env_get HTTP_BIND)
+  case "$b" in ''|0.0.0.0|'::') b=127.0.0.1 ;; esac
+  printf 'http://%s:%s' "$b" "$(port)"
+}
+url() { env_get TARLEAKS_URL; }
+
+# Every image the installation runs (docker-compose.yml + .env; set
+# TARLEAKS_VERSION in front to ask about another release), minus the ones
+# already on this machine.
+missing_images() {
+  local images img
+  images=$(docker compose config --images) || return 2
+  for img in $(printf '%s\n' "$images" | sort -u); do
+    docker image inspect "$img" >/dev/null 2>&1 || printf '%s\n' "$img"
+  done
+}
+# The Compose project this kit runs as (`name:` in docker-compose.yml, or
+# COMPOSE_PROJECT_NAME in .env). Containers and volumes carry it as a label;
+# never assume "tarleaks".
+project() { docker compose config 2>/dev/null | sed -n 's/^name: *//p' | head -1; }
+
+# Every container of this installation, whatever its profile, one id a line.
+project_containers() { # [docker ps filter…]
+  local p; p=$(project); [ -n "$p" ] || return 0
+  docker ps -aq --filter "label=com.docker.compose.project=$p" "$@"
+}
+
+# Stop everything, including services of apps a smaller selection dropped
+# (`docker compose stop` only sees the services of the apps chosen now).
+stop_all() {
+  docker compose stop
+  local ids; ids=$(project_containers --filter status=running)
+  [ -z "$ids" ] || printf '%s\n' "$ids" | xargs docker stop >/dev/null
+}
+
+# The migrate image was renamed with the rebrand: nexus-migrate up to 1.1.x,
+# tarleaks-migrate from 1.2.0. docker-compose.yml reads TARLEAKS_MIGRATE_IMAGE;
+# a name written in .env wins.
+use_migrate_image() { # version
+  if [ -f .env ] && grep -qE '^TARLEAKS_MIGRATE_IMAGE=.' .env; then return 0; fi
+  case "$1" in
+    0.*|1.0.*|1.1.*) TARLEAKS_MIGRATE_IMAGE=nexus-migrate ;;
+    *) TARLEAKS_MIGRATE_IMAGE=tarleaks-migrate ;;
+  esac
+  export TARLEAKS_MIGRATE_IMAGE
+}
+
+# A release number like 1.2.0 (optionally 1.2.0-rc1).
+valid_version() { printf '%s' "$1" | grep -qE '^[0-9]+[.][0-9]+[.][0-9]+([.-][A-Za-z0-9.-]+)?$'; }
+# Is release $1 older than release $2? 1.2.0-rc.1 < 1.2.0-rc.2 < 1.2.0 <
+# 1.2.1, the order ./tarleaks update uses (release_cmp, below). Comparing the
+# numbers alone made rc.1 equal rc.2, so going back to an older candidate was
+# not refused.
+version_older() { [ "$(release_cmp "$1" "$2")" = -1 ]; }
+# Compare two releases, candidates included: prints -1, 0 or 1 for a <, =, > b.
+# 1.2.0-rc.1 < 1.2.0-rc.2 < 1.2.0 < 1.2.1. A build tag such as
+# 1.2.0-rc.2-candidate sorts just below the release it is a candidate for.
+release_cmp() {
+  awk -v a="$1" -v b="$2" '
+    function key(v,   main, pre, n, x, i, out, num) {
+      main = v; pre = ""
+      if (index(v, "-")) { main = substr(v, 1, index(v, "-") - 1); pre = substr(v, index(v, "-") + 1) }
+      n = split(main, x, "."); out = ""
+      for (i = 1; i <= 3; i++) out = out sprintf("%09d", (i <= n ? x[i] : 0) + 0)
+      if (pre == "") return out "~"                       # a release beats its candidates
+      num = pre; gsub(/[^0-9]/, " ", num); split(num, x, " ")
+      return out "-" sprintf("%09d", x[1] + 0) (pre ~ /candidate/ ? "a" : "b")
+    }
+    BEGIN { ka = key(a); kb = key(b); print (ka < kb ? -1 : (ka > kb ? 1 : 0)) }'
+}
+# The newest published release in the tags on stdin that is newer than $1.
+# Release candidates count only when $1 is itself a candidate (someone who
+# evaluates 1.2.0-rc.1 may move to rc.2 or to 1.2.0; someone on 1.2.0 waits for
+# 1.2.1). Build tags (-candidate) never count.
+newest_release() { # current
+  local cur=$1 best="" t
+  while IFS= read -r t; do
+    printf '%s' "$t" | grep -qE '^[0-9]+[.][0-9]+[.][0-9]+(-rc[.][0-9]+)?$' || continue
+    case "$t" in *-rc.*) case "$cur" in *-rc.*) ;; *) continue ;; esac ;; esac
+    if [ -z "$best" ] || [ "$(release_cmp "$t" "$best")" = 1 ]; then best=$t; fi
+  done
+  [ -n "$best" ] && [ -n "$cur" ] && [ "$(release_cmp "$best" "$cur")" != 1 ] && best=$cur
+  printf '%s' "$best"
+}
+
+# Is the setup screen still waiting (no workspace yet)? Unknown counts as no.
+setup_pending() {
+  curl -fsS --max-time 10 "$(probe)/api/auth/installation" 2>/dev/null | grep -q '"setup_required": *true'
+}
+
+is_running() { docker compose ps --status running --services 2>/dev/null | grep -qx "$1"; }
+
+# Wait until the database answers, at most 5 minutes.
+wait_db() {
+  local user=$1 i=0
+  # Over the network (-h 127.0.0.1): on a first start the socket answers while
+  # the image still initialises the database with a temporary server.
+  until docker compose exec -T postgres pg_isready -q -h 127.0.0.1 -U "$user" >/dev/null 2>&1; do
+    i=$((i + 1))
+    if [ "$i" -gt 150 ]; then
+      bad "The database did not start within 5 minutes."
+      echo "  See why: ./tarleaks logs postgres   (a full disk is the usual cause: df -h)"
+      return 1
+    fi
+    sleep 2
+  done
+}
+
+# The owner of the kit folder. A backup made as root (cron, systemd) is handed
+# to them, so the person who runs ./tarleaks can open and restore it.
+kit_owner() { ls -nd . | awk '{print $3":"$4}'; }
+
+# Is this a complete pg_dumpall file? (readable gzip, holds a database, and
+# pg_dumpall's closing line, so a dump cut off half-way is refused).
+check_dump() { # file → prints the problem, returns 1 when bad
+  local found
+  found=$(gzip -dc "$1" 2>/dev/null | awk '
+    /^CREATE DATABASE / { db = 1 }
+    /^-- PostgreSQL database cluster dump complete/ { end = 1 }
+    END { print (db ? "db" : "-") (end ? "end" : "-") }') \
+    || { echo "$(basename "$1") is damaged (not a readable gzip file)"; return 1; }
+  case "$found" in
+    dbend) ;;
+    -*) echo "$(basename "$1") holds no database"; return 1 ;;
+    *) echo "$(basename "$1") is incomplete: the dump stopped before the end"; return 1 ;;
+  esac
+}
+check_archive() { # file → prints the problem, returns 1 when bad
+  if ! gzip -t "$1" 2>/dev/null || ! tar tzf "$1" >/dev/null 2>&1; then
+    echo "$(basename "$1") is damaged (cannot be read to the end)"; return 1
+  fi
+}
+
+# Copy a Docker volume (files or hrdocs) into an archive, or back. Runs in the
+# `toolbox` service (the database image's GNU tar), so Compose finds the volume
+# of THIS installation, and the file store's metadata (kept in extended
+# attributes: content type, ETag, checksums) goes with the files.
+toolbox() { # folder-on-this-machine script
+  docker compose run --rm --no-deps -T -e HOST_ID="$(id -u):$(id -g)" \
+    -v "$1:/backup" toolbox "$2"
+}
+sha256_check() { # folder sums-file — verify, print only what fails
+  local out rc=0
+  if command -v sha256sum >/dev/null 2>&1; then
+    out=$(cd "$1" && sha256sum -c "$2" 2>&1) || rc=$?
+  elif command -v shasum >/dev/null 2>&1; then
+    out=$(cd "$1" && shasum -a 256 -c "$2" 2>&1) || rc=$?
+  else
+    die "Neither sha256sum nor shasum is installed: cannot check the bundle."
+  fi
+  printf '%s\n' "$out" | grep -v ': OK$' || true
+  return "$rc"
+}
+
+# ./tarleaks doctor --bundle: one file a support person can read without a
+# call. What is in it: the doctor's report, versions, containers, the last 2000
+# log lines of every service, database sizes and migration heads, and the NAMES
+# of the .env keys. Every file passes scripts/lib-scrub.sh before it is packed,
+# and the person is asked to look inside before sending it anywhere.
+support_bundle() { # [output .tar.gz]
+  umask 077
+  local out=${1:-backups/tarleaks-support-$(date +%Y%m%d-%H%M%S).tar.gz} dir svc user db f services mem
+  case "$out" in *.tar.gz) ;; *) out="$out.tar.gz" ;; esac
+  [ ! -e "$out" ] || die "$out already exists. Choose another name."
+  mkdir -p "$(dirname "$out")"
+  dir=$(mktemp -d)
+  # Unscrubbed logs live here until they are packed: removed on any exit.
+  # shellcheck disable=SC2064  # expand now: the trap must remove THIS folder
+  trap "rm -rf '$dir'" EXIT
+  mkdir -p "$dir/logs"
+  echo "Collecting the doctor's report…"
+  "$0" doctor > "$dir/doctor.txt" 2>&1 || true
+  echo "Collecting versions and containers…"
+  {
+    echo "made: $(date '+%Y-%m-%d %H:%M:%S %z')"
+    echo "release: $(env_get TARLEAKS_VERSION)"
+    echo "apps: $(current_apps)"
+    echo "kit: $(git describe --always --dirty 2>/dev/null || echo 'not a git checkout')"
+    echo "system: $(uname -srm 2>/dev/null)"
+    echo "docker: $(docker version --format '{{.Server.Version}}' 2>/dev/null)"
+    echo "compose: $(docker compose version --short 2>/dev/null)"
+    mem=$(docker info --format '{{.MemTotal}}' 2>/dev/null || true)
+    case "$mem" in ''|*[!0-9]*) mem=0 ;; esac
+    echo "memory for docker (MB): $(( mem / 1024 / 1024 ))"
+    echo "cpus for docker: $(docker info --format '{{.NCPU}}' 2>/dev/null)"
+  } > "$dir/versions.txt"
+  docker compose ps -a > "$dir/containers.txt" 2>&1 || true
+  docker compose images > "$dir/images.txt" 2>&1 || true
+  df -h . "$(docker info --format '{{.DockerRootDir}}' 2>/dev/null || echo .)" > "$dir/disk.txt" 2>&1 || true
+  env_key_report .env > "$dir/env-keys.txt"
+  echo "Collecting the last 2000 log lines of each service…"
+  services=$(docker compose config --services 2>/dev/null || true)
+  if [ -z "$services" ]; then
+    warn "Docker Compose could not list the services (a setting in .env is missing?): the bundle has no logs."
+    echo "docker compose config --services listed nothing: logs skipped" > "$dir/logs/none.txt"
+  fi
+  for svc in $services; do
+    docker compose logs --no-color --tail 2000 "$svc" > "$dir/logs/$svc.log" 2>&1 || true
+  done
+  if is_running postgres; then
+    echo "Collecting database sizes and migration heads…"
+    user=$(env_get POSTGRES_USER); user=${user:-tarleaks}
+    db=$(env_get POSTGRES_DB); db=${db:-tarleaks}
+    docker compose exec -T postgres psql -X -U "$user" -d "$db" -c \
+      "SELECT datname AS database, pg_size_pretty(pg_database_size(datname)) AS size FROM pg_database WHERE NOT datistemplate ORDER BY 1" \
+      > "$dir/databases.txt" 2>&1 || true
+    for d in $(docker compose exec -T postgres psql -X -At -U "$user" -d "$db" -c \
+        "SELECT datname FROM pg_database WHERE NOT datistemplate AND datname <> 'postgres'" 2>/dev/null | tr -d '\r'); do
+      echo "== $d"
+      printf '%s\n' "SELECT string_agg(format('SELECT %L AS schema, max(version) AS head, count(*) AS applied, bool_and(success) AS all_ok FROM %I._sqlx_migrations', table_schema, table_schema), ' UNION ALL ') FROM information_schema.tables WHERE table_name = '_sqlx_migrations'" '\gexec' |
+        docker compose exec -T postgres psql -X -U "$user" -d "$d" 2>&1 || true
+    done > "$dir/migrations.txt"
+  fi
+  for f in "$dir"/*.txt "$dir"/logs/*.log; do
+    [ -f "$f" ] && scrub_file .env "$f"
+  done
+  tar -czf "$out" -C "$dir" .
+  rm -rf "$dir"
+  trap - EXIT
+  chmod 600 "$out"
+  if [ "$(id -u)" = 0 ] && [ "$(kit_owner)" != "0:0" ]; then chown "$(kit_owner)" "$out"; fi
+  ok "Support bundle written to $out ($(du -h "$out" | cut -f1))."
+  echo "  Passwords and keys from .env, licence keys, tokens, e-mail addresses, bank account, Emirates ID and phone numbers in known shapes were taken out."
+  echo "  Logs can still name people, companies or numbers in other shapes: look inside before you send it:"
+  echo "    mkdir -p /tmp/tarleaks-support && tar -xzf $out -C /tmp/tarleaks-support && less /tmp/tarleaks-support/doctor.txt"
+  echo "  Then attach it to your support request. It is not sent anywhere by itself."
+}
+
+wait_ready() {
+  local deadline=$(( $(date +%s) + 600 ))
+  until curl -fsS -o /dev/null "$(probe)/api/auth/installation" 2>/dev/null; do
+    [ "$(date +%s)" -gt "$deadline" ] && { warn "Not answering yet. Try: ./tarleaks doctor"; return 1; }
+    printf '.'; sleep 5
+  done
+  printf '\n'; ok "Running at $(url)"
+}
+
+# The document editor takes a minute or two to start the first time. Waits for
+# it (at most 4 minutes) and says plainly when it is not up yet; never fails.
+wait_editor() {
+  case ",$(env_get COMPOSE_PROFILES)," in *,onlyoffice,*) ;; *) return 0 ;; esac
+  local deadline=$(( $(date +%s) + 240 )) shown=0
+  until [ "$(curl -fsS --max-time 5 "$(probe)/onlyoffice/healthcheck" 2>/dev/null)" = true ]; do
+    if [ "$(date +%s)" -gt "$deadline" ]; then
+      warn "The document editor is still starting. New and Edit in Documents work once it is up (a minute or two more). See: ./tarleaks logs onlyoffice"
+      return 0
+    fi
+    [ "$shown" = 0 ] && { printf 'Starting the document editor (the first start takes a minute or two)'; shown=1; }
+    printf '.'; sleep 5
+  done
+  [ "$shown" = 0 ] || printf '\n'
+  ok "The document editor is ready"
+}
+
+cmd=${1:-help}; shift || true
+if [ -f .env ]; then use_migrate_image "$(env_get TARLEAKS_VERSION)"; fi
+case "$cmd" in
+  start)
+    env_signing_keys_note "$(env_fill_signing_keys)"
+    sync_apps
+    docker compose up -d --remove-orphans
+    apps_stop_unselected
+    wait_ready
+    wait_editor ;;
+  stop)
+    stop_all
+    ok "Stopped. Your data is kept; ./tarleaks start brings it back." ;;
+  restart)
+    env_signing_keys_note "$(env_fill_signing_keys)"
+    sync_apps
+    docker compose up -d --remove-orphans --force-recreate
+    apps_stop_unselected
+    wait_ready
+    wait_editor ;;
+  status)
+    docker compose ps --format 'table {{.Service}}\t{{.State}}\t{{.Status}}'
+    echo
+    if body=$(curl -fsS "$(probe)/api/auth/installation" 2>/dev/null); then
+      printf '%s' "$body" | python3 -c '
+import json,sys
+d=json.load(sys.stdin)
+l=d.get("licence") or {}
+ws=d.get("workspace") or {}
+print("Workspace:", ws.get("name") or "(not set up yet - open the address in a browser)")
+m=l.get("message") or ""
+print("Licence:  ", l.get("state","not configured") + (" - " + m if m else ""))
+' 2>/dev/null || printf '%s\n' "$body"
+    else
+      warn "The ERP is not answering on port $(port)."
+    fi ;;
+  logs)
+    docker compose logs -f --tail=200 "$@" ;;
+  upgrade)
+    target=""; offline=0; force=0
+    for a in "$@"; do
+      case "$a" in
+        --offline) offline=1 ;;
+        --force) force=1 ;;
+        -*) die "Unknown option: $a (usage: ./tarleaks upgrade [version] [--offline] [--force])" ;;
+        *) [ -z "$target" ] || die "usage: ./tarleaks upgrade [version] [--offline] [--force]"; target=$a ;;
+      esac
+    done
+    current=$(env_get TARLEAKS_VERSION)
+    v=${target:-$current}
+    [ -n "$v" ] || die "No version given and none in .env. Usage: ./tarleaks upgrade 1.2.0"
+    valid_version "$v" || die "\"$v\" is not a release number (like 1.2.0). The release notes list them."
+    if [ -n "$current" ] && version_older "$v" "$current"; then
+      [ "$force" = 1 ] || die "$v is OLDER than the release you run ($current). Going back does not undo the database updates $current made, so the older release may not start. To go back, restore the backup taken before the upgrade (backups/pre-upgrade-*): ./tarleaks restore <folder>. (--force tries anyway.)"
+      warn "Going back from $current to $v (--force)."
+    fi
+    if [ "$v" = "$current" ]; then
+      echo "Already on $v: checking its images and the database again."
+    else
+      echo "Upgrading from ${current:-?} to $v."
+    fi
+    # 1. The new images, while the current version keeps running. .env keeps
+    #    naming the current version until every image is on this machine.
+    use_migrate_image "$v"
+    fill_new_keys
+    # An installation in offline mode never downloads (docs/offline.md).
+    case "$(env_get TARLEAKS_OFFLINE)" in true|sealed) offline=1 ;; esac
+    # The document editor's image belongs to the TARGET release: 1.2.0 and
+    # later ship their own (blank templates for New, Arabic fonts). The .env
+    # of an older release names the stock one, and reading it here kept
+    # upgraded installations on the stock editor, where New document answered
+    # 502 (no /document-templates/).
+    oo_image=""
+    if _apps_version_older "$v" "$APPS_ONLYOFFICE_OWN_IMAGE_FROM"; then oo_image=$APPS_ONLYOFFICE_STOCK_IMAGE; fi
+    export TARLEAKS_ONLYOFFICE_IMAGE="$oo_image"
+    # Only the services the TARGET release runs for these apps: an app it does
+    # not have (taken out, like Diagram Studio in 1.2.0, or not there yet) is
+    # not downloaded, so it cannot stop the upgrade. .env follows after the
+    # backup (sync_apps below), with a message naming what was left out.
+    target_profiles=$(APPS_VERSION=$v; r=$(apps_resolve "$(current_apps 2>/dev/null)" 2>/dev/null) \
+      && c=$(apps_closure "$r") && printf '%s%s' "$(apps_units "$c")" "$(apps_addons "$c")") \
+      || target_profiles=$(env_get COMPOSE_PROFILES)
+    if [ "$offline" = 0 ] && COMPOSE_PROFILES="$target_profiles" TARLEAKS_VERSION="$v" apps_pull "./tarleaks upgrade $v"; then
+      ok "Images for $v downloaded"
+    else
+      missing=$(COMPOSE_PROFILES="$target_profiles" TARLEAKS_VERSION="$v" missing_images) || die "Could not read the list of images from docker-compose.yml."
+      if [ -n "$missing" ]; then
+        echo "Not on this machine:"; printf '%s\n' "$missing" | sed 's/^/  /'
+        [ "$offline" = 1 ] || bad "The download failed (see above)."
+        die "Nothing was changed: .env still names ${current:-the current version}. Load the offline bundle for $v (./tarleaks load-bundle <folder>), or fix the download, then run this again."
+      fi
+      ok "Every image for $v is already on this machine"
+    fi
+    # 2. Back up while .env still names the release the data belongs to, so
+    #    the backup's settings start that release if you ever restore it. A
+    #    failed backup stops the upgrade: nothing has changed yet.
+    echo "Taking a backup first."
+    pre=${TARLEAKS_PRE_UPGRADE_DIR:-backups/pre-upgrade-${current:-unknown}-$(date +%Y%m%d-%H%M%S)}
+    "$0" backup "$pre" || die "The backup failed, so the upgrade did not start. Nothing was changed."
+    migrate_legacy_keys
+    if [ -n "$target" ]; then set_env TARLEAKS_VERSION "$target"; fi
+    v=$(env_get TARLEAKS_VERSION)
+    echo "Upgrading to $v."
+    # The app sheet and the editors follow the release now in .env, not the
+    # one this script started with.
+    APPS_VERSION=$v
+    sync_apps
+    unset TARLEAKS_ONLYOFFICE_IMAGE
+    TARLEAKS_NO_DOWNLOAD=$offline apps_pull "./tarleaks upgrade ${target:-}" || exit 1
+    # From here on the backup is the way back: say so on every failure
+    #.
+    back="To go back to ${current:-the release from before} with its data: ./tarleaks restore $pre"
+    docker compose up -d --remove-orphans || { bad "$v did not start (above). See: ./tarleaks logs auth"; echo "  $back"; exit 1; }
+    apps_stop_unselected
+    wait_ready || echo "  If it does not come up: ./tarleaks logs auth. $back"
+    # 3. Bring the workspace database up to date. The output is kept next to
+    #    the backup, so a problem can be read (and sent to support) later.
+    if setup_pending; then
+      ok "No workspace yet (the setup screen has not been used): no database to update."
+    elif docker compose run --rm migrate > "$pre/migrate.log" 2>&1; then
+      ok "Database brought up to date"
+    else
+      bad "The database update step reported a problem. Its last lines:"
+      tail -n 15 "$pre/migrate.log" | sed 's/^/    /'
+      echo "  The whole output: $pre/migrate.log. $back"
+      exit 1
+    fi
+    ok "Upgraded to $v. The backup from before: $pre" ;;
+  update)
+    # One command from one release to the next (docs/upgrading.md): check the
+    # release is published and that this kit knows it, back up (and stop if
+    # that fails), download, switch, update the database, start, wait, check.
+    # Run it again at any time: on the newest release it only checks.
+    to=""; offline=0; force=0; check_only=0
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --to) [ $# -ge 2 ] || die "--to needs a release, like ./tarleaks update --to 1.2.0"; to=$2; shift 2 ;;
+        --to=*) to=${1#--to=}; shift ;;
+        --offline) offline=1; shift ;;
+        --force) force=1; shift ;;
+        --check) check_only=1; shift ;;
+        *) die "Unknown option: $1 (usage: ./tarleaks update [--to <release>] [--check] [--offline] [--force])" ;;
+      esac
+    done
+    [ -f .env ] || die "No .env here: run ./tarleaks update in the folder of the installation (where you ran ./install.sh)."
+    # One update at a time for this installation (mkdir is atomic everywhere).
+    lock=.tarleaks-update.lock
+    mkdir "$lock" 2>/dev/null || die "Another ./tarleaks update is running for this installation (or one was interrupted: if none is running, remove the folder $lock and run this again)."
+    trap 'rmdir "$lock" 2>/dev/null' EXIT
+    current=$(env_get TARLEAKS_VERSION)
+    [ -n "$current" ] || die ".env names no TARLEAKS_VERSION, so the release you run is unknown. Write it (TARLEAKS_VERSION=<release>) and run this again."
+    case "$(env_get TARLEAKS_OFFLINE)" in true|sealed) offline=1 ;; esac
+    tags=""
+    if [ "$offline" = 0 ] && registry_takes_licence; then
+      rc=0; tags=$(registry_tags auth) || rc=$?
+      if [ "$rc" != 0 ] || [ -z "$tags" ]; then
+        if [ "$rc" = 0 ]; then bad "$(registry_host) answered with an empty list of releases."
+        elif [ "$rc" != 1 ]; then bad "Could not ask $(registry_host) which releases exist (no answer). Allow outbound HTTPS to $(registry_host) and tarleaks.com, or use the offline bundle: ./tarleaks load-bundle <folder>, then ./tarleaks update --to <release> --offline."; fi
+        die "Nothing was changed: still on $current."
+      fi
+    fi
+    if [ -z "$to" ]; then
+      [ -n "$tags" ] || die "Name the release: ./tarleaks update --to <release> (offline, or a registry of your own, cannot list the releases)."
+      to=$(printf '%s\n' "$tags" | newest_release "$current")
+      [ -n "$to" ] || die "$(registry_host) lists no published release for this installation. Nothing was changed: still on $current."
+    fi
+    valid_version "$to" || die "\"$to\" is not a release number (like 1.2.0). The release notes (CHANGELOG.md) list them."
+    case "$to" in *-candidate*) [ "$force" = 1 ] || die "$to is a build under test, not a release. Name a release (CHANGELOG.md lists them)." ;; esac
+    if [ -n "$tags" ] && ! printf '%s\n' "$tags" | grep -qxF "$to"; then
+      die "Release $to is not published on $(registry_host). Published: $(printf '%s\n' "$tags" | grep -E '^[0-9]+[.][0-9]+[.][0-9]+(-rc[.][0-9]+)?$' | paste -sd ' ' -). Nothing was changed."
+    fi
+    if [ "$(release_cmp "$to" "$current")" = -1 ]; then
+      die "$to is OLDER than the release you run ($current). An update never goes back: the database has moved on. To return to an earlier state, restore the backup taken before the update: ./tarleaks restore backups/pre-update-… (ls backups)."
+    fi
+    if [ "$check_only" = 1 ]; then
+      if [ "$to" = "$current" ]; then ok "Up to date: $current is the newest release for this installation."
+      else ok "Release $to is available (you run $current). Update: ./tarleaks update --to $to"; fi
+      exit 0
+    fi
+    # The kit (this folder: compose file, scripts, gateway routes) belongs to a
+    # release too. A kit that has never heard of $to would start the new
+    # programs with old settings, so it is refused (CHANGELOG.md lists every
+    # release the kit knows).
+    if ! grep -qF "## [$to]" CHANGELOG.md 2>/dev/null; then
+      if [ "$force" = 1 ]; then warn "This kit does not list $to in CHANGELOG.md; going on anyway (--force)."
+      else
+        bad "This kit folder does not know release $to (CHANGELOG.md has no section for it): its compose file and scripts are older than the release."
+        echo "  Get the kit of $to first, then run ./tarleaks update again:"
+        echo "    git fetch --tags && git checkout v$to      (a ZIP install: unpack the $to ZIP over this folder; .env and backups/ stay)"
+        die "Nothing was changed: still on $current."
+      fi
+    fi
+    if [ "$to" = "$current" ]; then
+      # Also the way to finish an update that was interrupted after .env was
+      # switched: start what is missing and run the (idempotent) database step.
+      echo "Already on $to: making sure everything runs and the database is up to date."
+      env_signing_keys_note "$(env_fill_signing_keys)"
+      sync_apps
+      docker compose up -d --remove-orphans || die "Starting $to failed (above). See: ./tarleaks logs"
+      apps_stop_unselected
+      wait_ready || die "The ERP does not answer. See: ./tarleaks doctor"
+      if ! setup_pending; then
+        mlog=$(mktemp)
+        if docker compose run --rm migrate > "$mlog" 2>&1; then ok "Database is up to date"; rm -f "$mlog"
+        else bad "The database update step reported a problem. Its last lines:"; tail -n 15 "$mlog" | sed 's/^/    /'; rm -f "$mlog"; die "Send ./tarleaks doctor and these lines to info@tarleaks.com."; fi
+      fi
+      wait_editor
+      "$0" doctor || die "./tarleaks doctor found problems (above)."
+      ok "Up to date: $current is the newest release for this installation."
+      exit 0
+    fi
+    pre="backups/pre-update-$current-to-$to-$(date +%Y%m%d-%H%M%S)"
+    rollback_steps() {
+      echo
+      if [ "$(env_get TARLEAKS_VERSION)" = "$current" ]; then
+        # The switch never happened: the data is still the live one.
+        echo "${B}Nothing was switched:${N} .env still names $current and your data is as it was. Do NOT restore a backup."
+        echo "  If it is not running: ./tarleaks start"
+        echo "  To try again later: ./tarleaks update --to $to"
+        return 0
+      fi
+      echo "${B}How to go back to $current${N} (exactly as it was before the update):"
+      if [ -f "$pre/database.sql.gz" ]; then
+        echo "  ./tarleaks restore $pre      # database, files and the .env that names $current"
+        echo "  ./tarleaks start"
+        echo "  The update's own output is kept next to it ($pre/migrate.log, when the database step ran)."
+      else
+        echo "  Nothing was changed before it stopped: .env still names $(env_get TARLEAKS_VERSION). ./tarleaks start brings it back up."
+      fi
+      echo "  To try again later: ./tarleaks update --to $to"
+    }
+    echo "Updating from $current to $to. A backup is taken first: $pre"
+    upargs=("$to"); [ "$offline" = 1 ] && upargs+=(--offline)
+    if ! TARLEAKS_PRE_UPGRADE_DIR="$pre" "$0" upgrade "${upargs[@]}"; then
+      bad "The update to $to did not finish (above)."
+      rollback_steps; exit 1
+    fi
+    [ "$(env_get TARLEAKS_VERSION)" = "$to" ] || { bad ".env does not name $to after the update."; rollback_steps; exit 1; }
+    if ! wait_ready; then bad "Release $to does not answer after the update."; rollback_steps; exit 1; fi
+    wait_editor
+    echo
+    if ! "$0" doctor; then
+      bad "The update to $to ran, but ./tarleaks doctor found problems (above). Fix them, or go back:"
+      rollback_steps; exit 1
+    fi
+    ok "Updated from $current to $to. The backup from before: $pre (keep it until you have checked your data)." ;;
+  backup)
+    # Everything is written into <folder>.partial and renamed to <folder> only
+    # when every step worked: a folder without .partial is a complete backup.
+    umask 077
+    [ $# -le 1 ] || die "usage: ./tarleaks backup [folder]"
+    dir=${1:-backups/$(date +%Y%m%d-%H%M%S)}
+    dir=${dir%/}
+    [ -n "$dir" ] || die "usage: ./tarleaks backup [folder]"
+    if [ -e "$dir" ] && [ -n "$(ls -A "$dir" 2>/dev/null)" ]; then
+      die "$dir already exists and is not empty. Choose a new folder name."
+    fi
+    mkdir -p "$(dirname "$dir")"
+    # One absolute path, used for every step (Docker needs it for a mount).
+    dir="$(cd "$(dirname "$dir")" && pwd)/$(basename "$dir")"
+    part="$dir.partial"
+    rm -rf "$part"
+    mkdir -p "$part"
+    chmod 700 "$part"
+    trap 'rc=$?; if [ "$rc" != 0 ]; then rm -rf "$part"; bad "The backup FAILED (above). Nothing was kept: an incomplete backup is worse than none."; fi' EXIT
+    is_running postgres || die "The database is not running, so there is nothing to back up. Start it: ./tarleaks start"
+    user=$(env_get POSTGRES_USER); user=${user:-tarleaks}
+    echo "Backing up the database…"
+    docker compose exec -T postgres pg_dumpall -U "$user" --clean --if-exists | gzip > "$part/database.sql.gz"
+    problem=$(check_dump "$part/database.sql.gz") || die "$problem"
+    # The app's own nightly backups (<bucket>/<company>/backups/) are left out:
+    # the database dump above already holds every database, and copying those
+    # dumps again into every server backup fills the disk (from 1.2.0 the app
+    # keeps a week of them on this server). GNU tar exits 1 when a file changed
+    # while it was read (someone uploaded during the backup): kept, with a note.
+    echo "Backing up the files…"
+    toolbox "$part" '
+      set -f
+      for v in files hrdocs; do
+        ex=""; [ "$v" = files ] && ex="--exclude=./*/*/backups"
+        rc=0; tar --xattrs --xattrs-include="user.*" -czf "/backup/$v.tar.gz" $ex -C "/vol/$v" . || rc=$?
+        [ "$rc" -le 1 ] || exit "$rc"
+        [ "$rc" = 0 ] || echo "  note: a file in $v changed while it was copied (someone was working); the backup is still usable"
+      done
+      chmod 600 /backup/files.tar.gz /backup/hrdocs.tar.gz
+      chown "$HOST_ID" /backup/files.tar.gz /backup/hrdocs.tar.gz 2>/dev/null || true'
+    for v in files hrdocs; do problem=$(check_archive "$part/$v.tar.gz") || die "$problem"; done
+    cp .env "$part/env"
+    {
+      echo "made: $(date '+%Y-%m-%d %H:%M:%S %z')"
+      echo "version: $(env_get TARLEAKS_VERSION)"
+      echo "apps: $(env_get TARLEAKS_APPS)"
+      echo "project: $(project)"
+    } > "$part/backup-info.txt"
+    chmod 600 "$part"/*
+    mv "$part" "$dir"
+    trap - EXIT
+    if [ "$(id -u)" = 0 ] && [ "$(kit_owner)" != "0:0" ]; then chown -R "$(kit_owner)" "$dir"; fi
+    ok "Backup written to $dir ($(du -sh "$dir" | cut -f1): database, files, settings)."
+    warn "Anyone holding it can read all your data (the database is plain SQL) and has your keys: encrypt it before it leaves this machine (docs/backup-restore.md)." ;;
+  restore)
+    [ $# -ge 1 ] || die "usage: ./tarleaks restore <backup-folder> [--keep-settings]   (the backups are in backups/)"
+    skip_safety=0; keep=0; src=""
+    for a in "$@"; do
+      case "$a" in
+        --no-safety-backup) skip_safety=1 ;;
+        --keep-settings) keep=1 ;;
+        -*) die "Unknown option: $a (usage: ./tarleaks restore <backup-folder> [--keep-settings] [--no-safety-backup])" ;;
+        *) [ -z "$src" ] || die "usage: ./tarleaks restore <backup-folder>"; src=$a ;;
+      esac
+    done
+    [ -d "$src" ] || die "$src is not a folder. The backups are in backups/: ls backups"
+    case "$src" in *.partial|*.partial/) die "$src is an unfinished backup (its name ends in .partial): it cannot be restored." ;; esac
+    dir=$(cd "$src" && pwd)
+    # 1. Check everything BEFORE anything is touched.
+    [ -f "$dir/database.sql.gz" ] || die "$dir has no database.sql.gz: not a backup made by ./tarleaks backup."
+    echo "Checking the backup (this reads every file once)…"
+    problem=$(check_dump "$dir/database.sql.gz") || die "$problem. Nothing was changed. Use another backup."
+    for v in files hrdocs; do
+      if [ -f "$dir/$v.tar.gz" ]; then problem=$(check_archive "$dir/$v.tar.gz") || die "$problem. Nothing was changed. Use another backup."; fi
+    done
+    [ -f "$dir/files.tar.gz" ] || warn "This backup has no files.tar.gz: the documents in the file store are left as they are."
+    if [ -f "$dir/env" ]; then
+      grep -qE '^CLUSTER_DSN_KEY=.+' "$dir/env" || die "$dir/env has no CLUSTER_DSN_KEY: it is not a complete settings file. Nothing was changed."
+    else
+      warn "This backup has no env (settings) file: the current .env is kept. Its keys must be the ones the backup was made with, or the database cannot be read."
+    fi
+    ok "The backup is complete and readable."
+    [ -f "$dir/backup-info.txt" ] && sed 's/^/  /' "$dir/backup-info.txt"
+    # Whose backup is it? The settings file names the installation (Docker's
+    # project): copied over .env as it is, a backup of ANOTHER installation on
+    # this machine would make this folder drive that one, and the load below
+    # would replace ITS data.
+    if [ -f "$dir/env" ]; then
+      here=$(env_project .env); there=$(env_project "$dir/env")
+      if [ "$here" != "$there" ] && [ "$keep" = 0 ]; then
+        die "This backup comes from the installation named '$there'; this folder is the installation '$here'. Restored as it is, this folder would take over '$there' and replace ITS data. To load the backup into THIS installation ('$here'), keeping its name, port and address: ./tarleaks restore $src --keep-settings. To restore '$there' itself, run the restore in its own folder. Nothing was changed."
+      fi
+      if [ "$keep" = 1 ]; then
+        ok "Kept from this folder: its name ('$here'), port, address, HTTPS and offline settings. From the backup: its keys and apps."
+      else
+        b_url=$(env_file_get "$dir/env" TARLEAKS_URL); c_url=$(env_get TARLEAKS_URL)
+        b_port=$(env_file_get "$dir/env" HTTP_PORT); c_port=$(env_get HTTP_PORT)
+        b_port=${b_port:-80}; c_port=${c_port:-80}
+        if [ "$b_url" != "$c_url" ] || [ "$b_port" != "$c_port" ]; then
+          warn "The backup's settings answer at ${b_url:-?} (port $b_port); this folder now answers at ${c_url:-?} (port $c_port). After the restore the backup's apply. To keep this folder's: --keep-settings"
+        fi
+      fi
+    fi
+    printf '%sThis REPLACES the current database and files with the backup in %s.%s\n' "$B" "$dir" "$N"
+    if [ "$skip_safety" = 0 ]; then
+      echo "First a backup of what is there now is made in backups/pre-restore-<time>/, so you can go back."
+    else
+      warn "--no-safety-backup: what is there now is NOT backed up first."
+    fi
+    printf 'Type RESTORE to continue: '
+    read -r answer || true
+    [ "$answer" = RESTORE ] || die "Cancelled. Nothing was changed."
+    # 2. The current data, kept: a backup of it and the current settings.
+    user=$(env_get POSTGRES_USER); user=${user:-tarleaks}
+    docker compose up -d postgres
+    wait_db "$user" || die "Nothing was changed."
+    if [ "$skip_safety" = 0 ]; then
+      safety="backups/pre-restore-$(date +%Y%m%d-%H%M%S)"
+      "$0" backup "$safety" || die "The safety backup of the current data failed (above), so nothing was restored. Fix that first, or, if the current data does not matter: ./tarleaks restore $src --no-safety-backup"
+    fi
+    cp -p .env .env.before-restore
+    chmod 600 .env.before-restore
+    # 3. Stop everything but the database, then load. From here on, a failure
+    #    says how to go back.
+    trap 'rc=$?; if [ "$rc" != 0 ]; then bad "The restore did NOT finish (above)."; if [ -n "${safety:-}" ]; then echo "  Your data from before is in $safety, your settings in .env.before-restore. To go back to it: ./tarleaks restore $safety"; else echo "  Your settings from before are in .env.before-restore."; fi; fi' EXIT
+    stop_all
+    if [ -f "$dir/env" ]; then
+      cp "$dir/env" .env && chmod 600 .env
+      for k in $RESTORE_ALWAYS_KEEP; do
+        if grep -qE "^$k=" .env.before-restore; then set_env "$k" "$(env_file_get .env.before-restore "$k")"; fi
+      done
+      if [ "$keep" = 1 ]; then
+        for k in $RESTORE_KEEP_KEYS; do
+          if grep -qE "^$k=" .env.before-restore; then set_env "$k" "$(env_file_get .env.before-restore "$k")"
+          else env_del "$k"; fi
+          # A backup from before the rename may carry the old name of the key.
+          case "$k" in TARLEAKS_*) env_del "NEXUS_${k#TARLEAKS_}" ;; esac
+        done
+        sync_compose_files
+        ok "Keys and apps restored from the backup; name, port and address kept (the previous settings: .env.before-restore)"
+      else
+        ok "Settings restored from the backup (the previous ones: .env.before-restore)"
+      fi
+    fi
+    docker compose up -d postgres
+    wait_db "$user"
+    echo "Loading the database (stops at the first error)…"
+    docker compose exec -T postgres psql -X -q -U "$user" -d postgres -c \
+      "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE pid <> pg_backend_pid() AND datname IS NOT NULL" >/dev/null
+    # pg_dumpall --clean drops and re-creates every role, which fails for the
+    # role this load runs as: those two lines are left out, and errors in the
+    # role section ("already exists") are allowed. Everything after it — every
+    # database — must load without a single error.
+    gzip -dc "$dir/database.sql.gz" | awk -v u="$user" '
+      BEGIN { print "\\set ON_ERROR_STOP off"; q = "\"" u "\"" }
+      !on && ($0 == "DROP ROLE IF EXISTS " u ";" || $0 == "DROP ROLE IF EXISTS " q ";" || $0 == "CREATE ROLE " u ";" || $0 == "CREATE ROLE " q ";") { next }
+      !on && ($0 == "-- Databases" || $0 ~ /^\\connect /) { print "\\set ON_ERROR_STOP on"; on = 1 }
+      { print }' \
+      | docker compose exec -T postgres psql -X -q -v ON_ERROR_STOP=1 -U "$user" -d postgres >/dev/null
+    ok "Database restored"
+    # Files: unpacked next to the current ones inside the volume, then swapped
+    # in. The current files are removed only after the new ones are complete.
+    for v in files hrdocs; do
+      [ -f "$dir/$v.tar.gz" ] || continue
+      echo "Restoring $v…"
+      toolbox "$dir" "
+        set -e
+        cd /vol/$v
+        rm -rf .tarleaks-restore-new .tarleaks-restore-old
+        mkdir .tarleaks-restore-new .tarleaks-restore-old
+        tar --xattrs --xattrs-include='user.*' -xzf /backup/$v.tar.gz -C .tarleaks-restore-new
+        find . -mindepth 1 -maxdepth 1 ! -name .tarleaks-restore-new ! -name .tarleaks-restore-old -exec mv -t .tarleaks-restore-old {} +
+        find .tarleaks-restore-new -mindepth 1 -maxdepth 1 -exec mv -t . {} +
+        rm -rf .tarleaks-restore-new .tarleaks-restore-old"
+    done
+    ok "Files restored"
+    trap - EXIT
+    "$0" start
+    ok "Restored from $dir"
+    [ -z "${safety:-}" ] || echo "  What was there before is in $safety (delete it when you no longer need it)." ;;
+  profile)
+    p=${1:?usage: ./tarleaks profile small|standard|full}
+    preset=$(apps_preset "$p") || die "usage: ./tarleaks profile small|standard|full"
+    apply_apps "$preset"
+    docker compose up -d --remove-orphans
+    apps_stop_unselected
+    wait_ready ;;
+  apps)
+    sub=${1:-list}; shift || true
+    chosen=$(current_apps)
+    case "$sub" in
+      list)
+        closure=$(apps_closure "$chosen")
+        echo "${B}Chosen apps:${N} $(apps_names "$chosen")"
+        echo
+        apps_table "$chosen" "$(apps_modules "$closure")"
+        echo
+        echo "  [x] chosen   (+) installed because a chosen app needs it or shares its service"
+        echo "  (b) part of every installation   [ ] not installed"
+        echo
+        echo "Memory to plan for: about $(gb "$(apps_ram_mb "$closure")") GB."
+        echo "Add:    ./tarleaks apps add payroll attendance"
+        echo "Remove: ./tarleaks apps remove crm" ;;
+      add)
+        [ $# -gt 0 ] || die "usage: ./tarleaks apps add <app> [app ...]   (the list: ./tarleaks apps)"
+        new=$(apps_resolve "$*") || exit 1
+        merged=$(apps_resolve "$chosen,$new") || exit 1
+        before=$(apps_closure "$chosen"); after=$(apps_closure "$merged")
+        extra=""
+        for a in ${after//,/ }; do case ",$before," in *",$a,"*) ;; *) extra="$extra${extra:+,}$a" ;; esac; done
+        if [ -z "$extra" ]; then ok "Already installed: $(apps_names "$new")"; exit 0; fi
+        echo "Adding: $(apps_names "$extra")"
+        echo "Memory to plan for: about $(gb "$(apps_ram_mb "$before")") GB now, $(gb "$(apps_ram_mb "$after")") GB after."
+        apply_apps "$merged"
+        apps_pull "./tarleaks apps add $*" || exit 1
+        docker compose up -d --remove-orphans
+        wait_ready
+        ok "Added. Your licence decides who may use them: Settings > Licence lists the apps it covers." ;;
+      remove)
+        [ $# -gt 0 ] || die "usage: ./tarleaks apps remove <app> [app ...]"
+        targets=$(apps_resolve "$*") || exit 1
+        remaining=""
+        for a in ${chosen//,/ }; do case ",$targets," in *",$a,"*) ;; *) remaining="$remaining${remaining:+,}$a" ;; esac; done
+        for t in ${targets//,/ }; do
+          if is_base "$t"; then die "$(apps_names "$t") is part of every installation and cannot be removed."; fi
+          case ",$chosen," in
+            *",$t,"*) ;;
+            *) by=$(apps_needed_by "$t" "$chosen")
+               if [ -n "$by" ]; then die "$(apps_names "$t") is installed because $(apps_names "$by") needs it. Removing that removes it too: ./tarleaks apps remove ${by//,/ }"; fi
+               die "$(apps_names "$t") is not installed." ;;
+          esac
+          by=$(apps_needed_by "$t" "$remaining")
+          [ -z "$by" ] || die "Cannot remove $(apps_names "$t"): $(apps_names "$by") needs it. Remove both: ./tarleaks apps remove $t ${by//, / }"
+        done
+        apply_apps "$remaining"
+        docker compose up -d --remove-orphans
+        apps_stop_unselected
+        wait_ready
+        ok "Removed $(apps_names "$targets"). Its data is kept: ./tarleaks apps add $targets brings it back." ;;
+      *) die "usage: ./tarleaks apps [list | add <app>... | remove <app>...]" ;;
+    esac ;;
+  editors)
+    sub=${1:-status}
+    cur=on; [ "$(env_get TARLEAKS_EDITORS)" = off ] && cur=off
+    case "$sub" in
+      status)
+        if [ "$cur" = off ]; then echo "The editors are ${B}off${N}: Documents has no New or Edit, and Diagrams has no editor."
+        else echo "The editors are ${B}on${N}: $(apps_names "$(apps_addon_units "$(apps_closure "$(current_apps)")")")."; fi
+        echo "Switch: ./tarleaks editors on | off   (about $(gb "$(awk '!/^[[:space:]]*#/ && $2 == "addon" {t += $7} END {print t}' "$APPS_SHEET")") GB of memory when all are on)" ;;
+      on|off)
+        set_env TARLEAKS_EDITORS "$sub"
+        sync_apps
+        if [ "$sub" = on ]; then
+          apps_pull "./tarleaks editors on" || exit 1
+        fi
+        docker compose up -d --remove-orphans
+        apps_stop_unselected
+        wait_ready
+        wait_editor
+        if [ "$sub" = on ]; then ok "The editors are on. Documents: New and Edit; Diagrams: the editor$(case ",$(apps_addon_units "$(apps_closure "$(current_apps)")")," in *,diagrams-engine,*) printf ' and AI drawing' ;; esac)."
+        else ok "The editors are off. Your documents and diagrams are kept; ./tarleaks editors on brings the editors back."; fi ;;
+      *) die "usage: ./tarleaks editors [status | on | off]" ;;
+    esac ;;
+  network)
+    sub=${1:-status}
+    bind=$(env_get HTTP_BIND); bind=${bind:-0.0.0.0}
+    case "$bind" in
+      127.0.0.1|localhost) now="only this computer (HTTP_BIND=$bind)" ;;
+      0.0.0.0|'::') now="this computer and the whole network (HTTP_BIND=$bind, port $(port))" ;;
+      *) now="the network address $bind only (HTTP_BIND=$bind)" ;;
+    esac
+    case "$sub" in
+      status)
+        echo "Who can open the ERP: $now"
+        echo "Change it: ./tarleaks network local     only this computer"
+        echo "           ./tarleaks network office    everyone on the network (protect it with your firewall)" ;;
+      local|office)
+        if [ "$sub" = local ]; then want=127.0.0.1; else want=0.0.0.0; fi
+        if [ "$bind" = "$want" ]; then ok "Already set: $now"; exit 0; fi
+        set_env HTTP_BIND "$want"
+        if [ "$sub" = local ]; then
+          if [ "$(env_get TARLEAKS_HOST)" != localhost ] && [ "$(env_get TARLEAKS_HOST)" != 127.0.0.1 ]; then
+            warn "The address is $(env_get TARLEAKS_HOST), but only this computer can connect now: other computers will not reach it. Fine behind a reverse proxy on this machine."
+          fi
+        elif [ "$(env_get TARLEAKS_HOST)" = localhost ]; then
+          warn "Other computers can connect now, but the address is still localhost: links in e-mails and invitations say localhost. Give the ERP its network address: ./install.sh --host <this machine's address> (docs/network.md)."
+        fi
+        # Only the gateway publishes the port: recreate it, nothing else restarts.
+        docker compose up -d --no-deps gateway
+        wait_ready
+        if [ "$sub" = local ]; then ok "Only this computer can open the ERP now."
+        else ok "Everyone on the network can reach the ERP at port $(port) now. Allow it in this machine's firewall, and keep it from the internet unless you mean to publish it."; fi ;;
+      *) die "usage: ./tarleaks network [status | local | office]" ;;
+    esac ;;
+  offline)
+    # on: no optional outside service (AI keys, the AI drawing engine); the
+    # mail relay and a NAS on your network still work. sealed: on, and nothing
+    # inside Docker can leave this machine at all. off: back to normal (the
+    # saved AI settings come back). docs/offline.md
+    mode=${1:-}
+    cur=$(env_get TARLEAKS_OFFLINE); cur=${cur:-false}
+    if [ -z "$mode" ]; then
+      case "$cur" in
+        true) ok "Offline: no optional outside service is used (./tarleaks offline off|sealed)" ;;
+        sealed) ok "Offline, sealed: nothing inside Docker can leave this machine (./tarleaks offline off|on)" ;;
+        *) ok "Online (./tarleaks offline on|sealed to run without internet)" ;;
+      esac
+      exit 0
+    fi
+    case "$mode" in
+      on|true) mode=true ;;
+      sealed) ;;
+      off|false) mode=false ;;
+      *) die "Use ./tarleaks offline on, sealed or off" ;;
+    esac
+    offline_keys="GROQ_API_KEY OLLAMA_API_KEY OLLAMA_BASE_URL DIAGRAMS_AI_BASE_URL"
+    if [ "$mode" = false ]; then
+      for k in $offline_keys; do
+        saved=$(grep -E "^#offline-saved $k=" .env | tail -1 | sed "s/^#offline-saved $k=//" || true)
+        [ -z "$saved" ] || set_env "$k" "$saved"
+      done
+      tmp=$(mktemp); grep -v '^#offline-saved ' .env > "$tmp" || true; cat "$tmp" > .env; rm -f "$tmp"
+    else
+      for k in $offline_keys; do
+        v=$(env_get "$k"); [ -n "$v" ] || continue
+        printf '#offline-saved %s=%s\n' "$k" "$v" >> .env
+        set_env "$k" ""
+      done
+    fi
+    set_env TARLEAKS_OFFLINE "$mode"
+    chmod 600 .env
+    sync_compose_files
+    # The network of a sealed installation is another kind of network: it is
+    # made again (the containers stop for a moment; no data is touched).
+    if [ "$cur" = sealed ] || [ "$mode" = sealed ]; then
+      [ "$cur" = "$mode" ] || docker compose down --remove-orphans >/dev/null 2>&1 || true
+    fi
+    problems=$(env_problems | grep '^ERROR' || true)
+    if [ -n "$problems" ]; then printf '%s\n' "$problems" | sed 's/^ERROR /  /'; fi
+    "$0" restart
+    case "$mode" in
+      true) ok "Offline: the ERP uses no optional outside service. Your mail relay and NAS still work." ;;
+      sealed) ok "Offline, sealed: nothing inside Docker can leave this machine." ;;
+      false) ok "Online again." ;;
+    esac ;;
+  load-bundle)
+    src=${1:?usage: ./tarleaks load-bundle <bundle folder | .tar file | .tar.part-00 file>}
+    [ -e "$src" ] || die "$src not found."
+    docker info >/dev/null 2>&1 || die "Docker is not running. Start it, then run this again."
+    work=""
+    trap '[ -z "$work" ] || rm -rf "$work"' EXIT
+    check_platform() { # images.txt — refuse a bundle made for another CPU type
+      local plat here
+      plat=$(sed -n 's/^# *platform: *//p' "$1" | head -1)
+      here=$(docker info --format '{{.Architecture}}' 2>/dev/null || echo '?')
+      case "$here" in x86_64|amd64) here=linux/amd64 ;; aarch64|arm64) here=linux/arm64 ;; esac
+      if [ -n "$plat" ] && [ "$plat" != "$here" ]; then
+        die "This bundle is for $plat; this machine runs $here. Get the $here bundle."
+      fi
+    }
+    if [ -d "$src" ] && [ -f "$src/images.txt" ]; then
+      dir=$src
+    else
+      # An archive: one .tar, or the .tar.part-NN pieces of one.
+      if [ -d "$src" ]; then
+        for f in "$src"/*.images.txt; do [ ! -f "$f" ] || check_platform "$f"; done
+        for sums in "$src"/*.SHA256SUMS; do
+          [ -f "$sums" ] || continue
+          echo "Checking the downloaded files against $(basename "$sums")…"
+          sha256_check "$src" "$(basename "$sums")" || die "A downloaded file is damaged or incomplete (above). Download it again."
+          ok "Downloaded files intact"
+        done
+        set -- "$src"/*.tar.part-*
+        [ -e "$1" ] || set -- "$src"/*.tar
+        [ -e "$1" ] || die "No bundle in $src: expected images.txt, a .tar file or .tar.part-NN files."
+        [ "$(for f in "$@"; do printf '%s\n' "${f%.part-*}"; done | sort -u | wc -l)" -eq 1 ] \
+          || die "$src holds more than one bundle. Put each bundle in a folder of its own."
+      else
+        case "$src" in
+          *.tar.part-*) set -- "${src%.part-*}".part-* ;;
+          *.tar) set -- "$src" ;;
+          *) die "$src is not a bundle: give the bundle folder, its .tar file or its first .tar.part-NN file." ;;
+        esac
+      fi
+      # Unpack next to the kit, not in /tmp (often small, or kept in memory).
+      work=$(mktemp -d ./.bundle-XXXXXX)
+      echo "Unpacking $# file(s) (needs about as much free disk as the bundle)…"
+      cat "$@" | tar -xf - -C "$work" || die "Could not unpack the bundle: a part is missing or damaged."
+      dir=$(find "$work" -name images.txt -print | head -1)
+      [ -n "$dir" ] || die "The archive holds no images.txt: not a Tarleaks offline bundle."
+      dir=$(dirname "$dir")
+    fi
+    [ -f "$dir/SHA256SUMS" ] || die "$dir/SHA256SUMS is missing: the bundle cannot be checked."
+    check_platform "$dir/images.txt"
+    echo "Checking every image file against SHA256SUMS…"
+    sha256_check "$dir" SHA256SUMS || die "The bundle is damaged (above). Copy it again."
+    ok "Bundle intact"
+    n=0
+    for f in $(awk '{ sub(/^\*/, "", $2); print $2 }' "$dir/SHA256SUMS" | grep '^images/'); do
+      echo "Loading $(basename "$f")…"
+      out=$(docker load -i "$dir/$f") || die "Docker could not load $f. Check the free disk: df -h"
+      printf '%s\n' "$out" | sed 's/^/  /'
+      # A bundle names its images where they were built; give them the name
+      # this installation pulls (TARLEAKS_REGISTRY), so nothing is downloaded.
+      printf '%s\n' "$out" | registry_adopt_loaded
+      n=$((n + 1))
+    done
+    [ "$n" -gt 0 ] || die "SHA256SUMS lists no files under images/: nothing to load."
+    ok "Loaded $n image file(s)"
+    bver=$(sed -n 's/^# *version: *//p' "$dir/images.txt" | head -1)
+    if [ ! -f .env ]; then
+      echo "Next: ./install.sh --offline"
+    else
+      if ! missing=$(missing_images 2>/dev/null); then
+        warn "Could not compare with docker-compose.yml. Run: ./tarleaks doctor"
+      elif [ -z "$missing" ]; then
+        ok "Every image this installation needs is on this machine."
+      elif [ -n "$bver" ] && [ "$bver" != "$(env_get TARLEAKS_VERSION)" ]; then
+        echo "This bundle is version $bver; .env names $(env_get TARLEAKS_VERSION)."
+        echo "Next: ./tarleaks upgrade $bver --offline"
+      else
+        warn "Still missing for this installation:"; printf '%s\n' "$missing" | sed 's/^/  /'
+      fi
+    fi ;;
+  reset-admin)
+    # The way back for an administrator who forgot the password on a server
+    # without outgoing e-mail, or the only administrator whose account was
+    # switched off: a temporary password, the account on again, the
+    # Administrator role given back, every session ended, an audit row. Runs
+    # in the auth service, which must be running.
+    [ $# -ge 1 ] || die "Usage: ./tarleaks reset-admin <e-mail> [--company <short name>] [--reset-two-factor]"
+    docker compose ps --status running --services 2>/dev/null | grep -qx auth \
+      || die "The ERP is not running. Start it first: ./tarleaks start"
+    rc=0
+    docker compose exec -T auth /app/service reset-admin "$@" || rc=$?
+    case "$rc" in
+      0) ;;
+      2) die "This release does not have reset-admin yet. Upgrade first (./tarleaks upgrade), then run it again." ;;
+      *) die "The password was not reset: see the message above." ;;
+    esac ;;
+  setup-code)
+    code=$(env_get TARLEAKS_SETUP_CODE)
+    [ -n "$code" ] || code=$(env_get NEXUS_SETUP_CODE) # an .env from before the rename
+    echo "Setup code: $code" ;;
+  doctor)
+    if [ "${1:-}" = --bundle ]; then
+      shift
+      [ $# -le 1 ] || die "usage: ./tarleaks doctor --bundle [file.tar.gz]"
+      support_bundle "${1:-}"
+      exit 0
+    fi
+    [ $# = 0 ] || die "usage: ./tarleaks doctor [--bundle [file.tar.gz]]"
+    # Checks everything and never stops half-way; exits 1 when a line is red.
+    set +e
+    problems=0
+    flag() { bad "$@"; problems=$((problems + 1)); }
+    echo "${B}Docker${N}"
+    if docker info >/dev/null 2>&1; then ok "Docker is running"
+    else flag "Docker is not running (or this user may not use it). Start Docker, then run this again."; exit 1; fi
+    user=$(env_get POSTGRES_USER); user=${user:-tarleaks}
+    db=$(env_get POSTGRES_DB); db=${db:-tarleaks}
+    pending=0; setup_pending && pending=1
+
+    echo "${B}Profile and addresses${N}"
+    profile=$(env_get TARLEAKS_PROFILE_ENV); offline=$(env_get TARLEAKS_OFFLINE); offline=${offline:-false}
+    env_out=$(env_problems)
+    if [ -z "$(printf '%s' "$env_out" | grep '^ERROR' || true)" ]; then
+      ok "Profile ${profile:-local}$( [ -n "$(env_get TARLEAKS_TLS)" ] && printf ', HTTPS by %s' "$(env_get TARLEAKS_TLS)"), people open $(url)$( [ "$offline" != false ] && printf ', offline (%s)' "$offline")"
+    fi
+    while IFS= read -r line; do
+      case "$line" in
+        ERROR\ *) flag "${line#ERROR }" ;;
+        WARN\ *) warn "${line#WARN }" ;;
+      esac
+    done <<<"$env_out"
+    if [ "$(compose_files)" != "$(env_get COMPOSE_FILE)" ]; then
+      flag "COMPOSE_FILE in .env does not match the profile, HTTPS and offline settings. Fix: ./tarleaks restart"
+    fi
+
+    echo "${B}Containers${N}"
+    # One-shot steps run and exit; everything else must run (and be healthy).
+    one_shot=" rabbitmq-init objects-init postgres-prepare migrate crm-migrate parties-migrate sales_orders-migrate "
+    states=$(docker compose ps -a --format '{{.Service}} {{.State}} {{.ExitCode}} {{.Health}}' 2>/dev/null)
+    wanted=$(docker compose config --services 2>/dev/null)
+    down=""; sick=""; failed=""; n=0
+    for svc in $wanted; do
+      line=$(printf '%s\n' "$states" | awk -v s="$svc" '$1 == s' | head -1)
+      state=$(printf '%s' "$line" | awk '{print $2}'); code=$(printf '%s' "$line" | awk '{print $3}'); health=$(printf '%s' "$line" | awk '{print $4}')
+      case "$one_shot" in
+        *" $svc "*)
+          if [ "$state" = exited ] && [ "${code:-0}" != 0 ]; then
+            if [ "$svc" = migrate ] && [ "$pending" = 1 ]; then continue; fi   # no workspace yet: nothing to update
+            failed="$failed $svc(exit $code)"
+          fi
+          continue ;;
+      esac
+      n=$((n + 1))
+      if [ "$state" != running ]; then down="$down $svc${state:+($state)}"
+      elif [ "$health" = unhealthy ]; then sick="$sick $svc"; fi
+    done
+    [ -z "$down" ] || flag "Not running:$down. Start them: ./tarleaks start   See why: ./tarleaks logs <service>"
+    [ -z "$sick" ] || flag "Running but failing its health check:$sick. See why: ./tarleaks logs <service>; then ./tarleaks restart"
+    [ -z "$failed" ] || flag "A start-up step failed:$failed. See why: ./tarleaks logs <step>, then ./tarleaks start"
+    [ -n "$down$sick$failed" ] || ok "All $n services the chosen apps need are running"
+    extra=""
+    for svc in $(docker ps --filter "label=com.docker.compose.project=$(project)" --format '{{.Label "com.docker.compose.service"}}' | sort -u); do
+      printf '%s\n' "$wanted" | grep -qx "$svc" || extra="$extra $svc"
+    done
+    [ -z "$extra" ] || warn "Still running although no chosen app needs them:$extra. ./tarleaks start stops them."
+
+    echo "${B}Apps${N}"
+    closure=$(apps_closure "$(current_apps)")
+    need=$(apps_ram_mb "$closure")
+    have=$(( $(docker info --format '{{.MemTotal}}' 2>/dev/null || echo 0) / 1024 / 1024 ))
+    if [ $(( need + 1024 )) -gt "$have" ]; then
+      flag "The chosen apps need about $(gb "$need") GB plus room to work; Docker has $(gb "$have") GB. Remove apps (./tarleaks apps), switch the editors off (./tarleaks editors off, gives back about 2 GB) or give Docker more memory."
+    else
+      ok "$(apps_names "$(current_apps)"): about $(gb "$need") GB needed, Docker has $(gb "$have") GB"
+    fi
+
+    echo "${B}Workspace${N}"
+    if is_running postgres; then
+      rows=$(docker compose exec -T postgres psql -X -At -F ' ' -U "$user" -d "$db" -c \
+        "SELECT t.slug, r.status FROM auth.tenant_routing r JOIN auth.tenants t ON t.id = r.tenant_id ORDER BY r.created_at" 2>/dev/null)
+      if [ -z "$rows" ]; then
+        if [ "$pending" = 1 ]; then ok "Not set up yet: open $(url) and enter the setup code (./tarleaks setup-code)"
+        else warn "No workspace database found yet."; fi
+      else
+        while read -r slug st; do
+          [ -n "$slug" ] || continue
+          if [ "$st" = active ]; then ok "Workspace $slug: database ready"
+          else flag "Workspace $slug: its database is '$st', not 'active': the apps cannot open it. See ./tarleaks logs auth migrate; if setup stopped half-way, contact support with ./tarleaks doctor's output."; fi
+        done <<<"$rows"
+      fi
+    else
+      flag "The database is not running (above), so the workspace cannot be checked."
+    fi
+
+    echo "${B}Messaging${N}"
+    if is_running rabbitmq; then
+      queues=$(docker compose exec -T rabbitmq rabbitmqctl list_queues -q --no-table-headers name consumers messages 2>/dev/null)
+      running=$(docker compose ps --status running --services 2>/dev/null)
+      deaf=""; detail=""
+      while read -r q consumers msgs; do
+        [ -n "$q" ] || continue
+        case "$q" in *.dlq|*.self-declare|*.scheduler|social.*|meet.*) continue ;; esac
+        # Read by no service of release 1.0.0 (the product fixes it); limited by
+        # the queue-limits policy meanwhile.
+        [ "$q" = notifications.from-project_management ] && continue
+        # Social is not in the kit, so nothing publishes here, and 1.2.0's
+        # notifications service does not listen without it.
+        [ "$q" = notifications.from-social ] && continue
+        owner=${q%%.*}
+        printf '%s\n' "$running" | grep -qx "$owner" || continue
+        if [ "${consumers:-0}" = 0 ]; then
+          case " $deaf " in *" $owner "*) ;; *) deaf="$deaf $owner" ;; esac
+          detail="$detail $q($msgs waiting)"
+        fi
+      done <<<"$queues"
+      if [ -z "$queues" ]; then warn "Could not list the queues (rabbitmqctl did not answer)."
+      elif [ -n "$deaf" ]; then
+        flag "Running but not receiving events:$deaf. Usually after a reboot or a message-queue restart. Fix: ./tarleaks restart"
+        echo "  Queues nobody reads:$detail"
+      else ok "Every running app is receiving events"; fi
+    else
+      flag "The message queue (rabbitmq) is not running (above)."
+    fi
+
+    echo "${B}Address${N}"
+    rc=0; curl -fsS -o /dev/null --max-time 15 "$(probe)/api/auth/installation" 2>/dev/null || rc=$?
+    case "$rc" in
+      0) ok "Answers at $(probe) (people use $(url))" ;;
+      7) flag "Nothing answers at $(probe). Start it: ./tarleaks start (and check HTTP_PORT / HTTP_BIND in .env)" ;;
+      52|56) flag "Port $(port) is open but answers nothing. On Docker Desktop this happens after a restart of the computer: docker compose up -d --force-recreate gateway" ;;
+      22) flag "The gateway answers with an error. See why: ./tarleaks logs gateway auth" ;;
+      28) flag "$(probe) did not answer within 15 seconds. See why: ./tarleaks logs gateway auth" ;;
+      *) flag "No answer at $(probe) (curl error $rc). See why: ./tarleaks logs gateway auth" ;;
+    esac
+
+    echo "${B}Editors${N}"
+    case ",$(env_get COMPOSE_PROFILES)," in
+      *,onlyoffice,*)
+        if [ "$(curl -fsS --max-time 10 "$(probe)/onlyoffice/healthcheck" 2>/dev/null)" = true ]; then ok "The document editor answers at $(url)/onlyoffice/"
+        elif is_running onlyoffice; then warn "The document editor is running but does not answer yet (the first start takes a minute or two). If it stays like this: ./tarleaks logs onlyoffice onlyoffice-proxy"
+        else flag "The document editor is not running: New and Edit in Documents will not work. Start it: ./tarleaks start   See why: ./tarleaks logs onlyoffice" ; fi ;;
+      *) ok "The document editor is off (Documents has no New or Edit; ./tarleaks editors on)" ;;
+    esac
+    echo "${B}Licence server${N}"
+    if [ "$offline" != false ]; then
+      ok "Not checked: this installation runs offline (the licence key decides, above)"
+    elif ! is_running auth; then
+      warn "Not checked: the sign-in service (auth) is not running (above)."
+    elif docker compose exec -T auth curl -fsS -o /dev/null --max-time 10 https://tarleaks.com/api/activation/public-key 2>/dev/null; then
+      ok "tarleaks.com is reachable from the ERP"
+    else
+      flag "tarleaks.com is NOT reachable from the ERP: the licence check-in will fail. Allow outbound HTTPS (port 443) to tarleaks.com, or set HTTPS_PROXY in .env. (Expected on an air-gapped installation: docs/faq.md.)"
+    fi
+    echo "${B}Image downloads${N}"
+    hp=$(env_get HTTPS_PROXY)
+    if [ "$offline" != false ]; then
+      ok "Not checked: offline. Upgrades come as an offline bundle (./tarleaks load-bundle)"
+    elif ! registry_takes_licence; then
+      ok "Images come from $(registry_value) (your own registry: sign Docker in to it the way it says)"
+    elif [ -z "$(registry_licence_key)" ]; then
+      warn "No licence key to download with yet: upgrades and new apps cannot download. Enter the key in Settings, Licence (or ./install.sh --licence-key <key>)."
+    else
+      # shellcheck disable=SC2034  # read by scripts/lib-registry.sh
+      REGISTRY_CURL_PROXY=$hp
+      key=$(registry_licence_key)
+      _reg_check_key "$(registry_host)" "$key"; rc=$?
+      key=""
+      case "$rc" in
+        0) ok "$(registry_host) accepts the licence key: upgrades can download" ;;
+        1) flag "Upgrades and new apps cannot download (above)." ;;
+        *) warn "Could not reach $(registry_host) from this machine: upgrades need outbound HTTPS to it and to tarleaks.com." ;;
+      esac
+    fi
+    echo "${B}Clock${N}"
+    remote=""
+    [ "$offline" != false ] || remote=$(curl -fsSI --max-time 10 ${hp:+--proxy "$hp"} https://tarleaks.com 2>/dev/null | awk -F': ' 'tolower($1)=="date" {print $2}' | tr -d '\r')
+    if [ -n "$remote" ] && command -v python3 >/dev/null 2>&1; then
+      skew=$(python3 -c "import sys,email.utils,time; print(int(abs(time.time()-email.utils.parsedate_to_datetime(sys.argv[1]).timestamp())))" "$remote")
+      if [ "$skew" -gt 600 ]; then flag "This machine's clock is ${skew}s off. Enable automatic time (NTP): the licence refuses a clock that runs behind."; else ok "Clock is correct (±${skew}s)"; fi
+    elif [ "$offline" != false ]; then
+      ok "Not checked: offline. Keep this machine's clock on your own time server (docs/offline.md)"
+    else
+      warn "Not checked (tarleaks.com did not answer, or python3 is missing)."
+    fi
+    # The gateway reads its routes through a file watch (inotify). A machine
+    # out of inotify instances (fs.inotify.max_user_instances, shared by every
+    # container that runs as root) starts it with NO routes: every page 404s.
+    echo "${B}Gateway${N}"
+    gw_log=""
+    if is_running gateway; then
+      gw_since=$(docker inspect -f '{{.State.StartedAt}}' "$(docker compose ps -q gateway 2>/dev/null | head -1)" 2>/dev/null || true)
+      [ -z "$gw_since" ] || gw_log=$(docker compose logs --no-color --since "$gw_since" gateway 2>/dev/null || true)
+    fi
+    if ! is_running gateway; then
+      warn "The gateway is not running, so nobody can open the ERP. See why: ./tarleaks logs gateway"
+    elif printf '%s\n' "$gw_log" | grep -iE 'cannot start the provider \*file|inotify' >/dev/null; then
+      flag "The gateway started without its routes (\"couldn't initialize inotify: too many open files\"), so every page answers 404. Raise the limit (Linux: echo fs.inotify.max_user_instances=1024 | sudo tee /etc/sysctl.d/60-tarleaks-inotify.conf && sudo sysctl --system), then ./tarleaks restart. docs/troubleshooting.md"
+    else
+      inotify=""
+      [ -r /proc/sys/fs/inotify/max_user_instances ] && inotify=$(cat /proc/sys/fs/inotify/max_user_instances)
+      [ -n "$inotify" ] || inotify=$(docker compose exec -T gateway cat /proc/sys/fs/inotify/max_user_instances 2>/dev/null | tr -d '\r' || true)
+      ncont=$(docker ps -q 2>/dev/null | wc -l | tr -d ' ')
+      if [ -n "$inotify" ] && [ "$inotify" -le 128 ] 2>/dev/null && [ "${ncont:-0}" -gt 60 ]; then
+        warn "This machine allows only $inotify inotify instances and runs $ncont containers: at the next restart the gateway may start without its routes (every page 404). Raise it: echo fs.inotify.max_user_instances=1024 | sudo tee /etc/sysctl.d/60-tarleaks-inotify.conf && sudo sysctl --system"
+      else
+        ok "The gateway started with its routes${inotify:+ (inotify instances allowed: $inotify)}"
+      fi
+    fi
+    echo "${B}Disk${N}"
+    root=$(docker info --format '{{.DockerRootDir}}' 2>/dev/null)
+    if [ -n "$root" ] && [ -d "$root" ]; then
+      avail_kb=$(df -Pk "$root" 2>/dev/null | awk 'NR==2 {print $4}')
+      where="where Docker keeps images and data ($root)"
+    else
+      avail_kb=$(df -Pk . | awk 'NR==2 {print $4}')
+      where="for this folder (Docker Desktop keeps its data in its own disk image: Settings, Resources)"
+    fi
+    if [ -n "$avail_kb" ] && [ "$avail_kb" -lt 5242880 ]; then
+      flag "Only $((avail_kb / 1024 / 1024)) GB free $where. Below 5 GB the database can stop. Free space: docker image prune; move old backups off the machine."
+    elif [ -n "$avail_kb" ]; then ok "$((avail_kb / 1024 / 1024)) GB free $where"; fi
+    echo
+    "$0" status
+    echo
+    if [ "$problems" -gt 0 ]; then bad "$problems problem(s) found (✗ above)."; exit 1; fi
+    ok "No problems found." ;;
+  uninstall)
+    case "${1:-}" in ''|--purge) ;; *) die "usage: ./tarleaks uninstall [--purge]" ;; esac
+    if [ "${1:-}" = --purge ]; then
+      printf 'This DELETES all data in Docker (database, files, queues). Type DELETE to continue: '
+      read -r answer || true; [ "$answer" = DELETE ] || die "Cancelled."
+      stop_all
+      ids=$(project_containers)
+      [ -z "$ids" ] || printf '%s\n' "$ids" | xargs docker rm -f >/dev/null
+      docker compose down -v --remove-orphans
+      ok "Removed the containers and the data volumes (database, files, queues)."
+      nb=0; [ -d backups ] && nb=$(find backups -mindepth 1 -maxdepth 1 -type d | wc -l | tr -d ' ')
+      echo "${B}Still on this machine (not deleted):${N}"
+      [ "$nb" = 0 ] || echo "  backups/      $nb backup(s): each is a full, readable copy of the database plus your keys"
+      echo "  .env          the passwords and keys of this installation$([ -f .env.before-restore ] && printf ' (and .env.before-restore)')"
+      echo "  the images    about $(docker compose config --images 2>/dev/null | sort -u | xargs docker image inspect --format '{{.Size}}' 2>/dev/null | awk '{s+=$1} END {printf "%.1f", s/1073741824}') GB of programs (no data)"
+      echo "To remove those too (from this folder):"
+      echo "  rm -rf backups .env .env.before-restore"
+      echo "  docker image prune -a      (removes every image no container uses, not only Tarleaks')"
+      echo "Then delete this folder."
+    else
+      stop_all
+      ids=$(project_containers)
+      [ -z "$ids" ] || printf '%s\n' "$ids" | xargs docker rm -f >/dev/null
+      docker compose down --remove-orphans
+      ok "Removed the containers. Your data is kept in Docker volumes (./tarleaks start brings everything back; ./tarleaks uninstall --purge deletes the data)."
+    fi ;;
+  help|-h|--help)
+    sed -n '2,/^# ====/p' "$0" | grep -v '^# ====' | sed 's/^# \{0,1\}//' ;;
+  *)
+    sed -n '2,/^# ====/p' "$0" | grep -v '^# ====' | sed 's/^# \{0,1\}//' >&2
+    bad "Unknown command: $cmd (the list is above)" >&2
+    exit 2 ;;
+esac

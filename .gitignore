@@ -1,0 +1,23 @@
+# Your own settings and secrets — never commit them.
+.env
+.env.*
+!.env.example
+licence.token
+*.token
+
+# Data written by a running installation.
+data/
+backups/
+*.dump
+*.sql.gz
+
+# Editor and OS noise.
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+
+# An unpacked offline bundle (./tarleaks load-bundle removes it when done).
+.bundle-*/
+.tarleaks-update.lock/

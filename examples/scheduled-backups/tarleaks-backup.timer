@@ -1,0 +1,14 @@
+# Runs tarleaks-backup.service every night.
+# Install: sudo systemctl daemon-reload && sudo systemctl enable --now tarleaks-backup.timer
+[Unit]
+Description=Nightly Tarleaks ERP backup
+
+[Timer]
+# Every day at 02:15 local time. If the machine was off, run once when it starts.
+OnCalendar=*-*-* 02:15:00
+Persistent=true
+# Spread the start by up to five minutes.
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,13 @@
+# Send the ERP's outbound HTTPS (the licence check-in to tarleaks.com, and any
+# e-mail or AI provider you configure over HTTPS) through your company proxy.
+# Copy this file next to docker-compose.yml, set OUTBOUND_PROXY in .env, then
+# ./tarleaks restart. See README.md in this folder.
+x-proxy: &proxy
+  HTTPS_PROXY: ${OUTBOUND_PROXY:?set OUTBOUND_PROXY in .env, e.g. http://proxy.example.local:3128}
+  HTTP_PROXY: ${OUTBOUND_PROXY}
+  # Never send the ERP's own services through the proxy.
+  NO_PROXY: localhost,127.0.0.1,accounting,activities,assets,attendance,attendance-jobs,auth,chat,construction,contracts,correspondence,crm,diagrams,documents,ecommerce,fleet,gamification,gateway,helpdesk,hr,imtithal,insights,inventory,iso42001,lms,migrate,notifications,objects,objects-init,parties,payroll,pdftools,pos,postgres,procurement,project_management,rabbitmq,rabbitmq-init,redis,rental,reports,sales_orders,subscriptions,web
+
+services:
+  auth:
+    environment: *proxy

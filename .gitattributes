@@ -1,0 +1,10 @@
+# Shell scripts must keep LF endings even when cloned on Windows, or they fail
+# inside Linux containers and WSL.
+*.sh       text eol=lf
+tarleaks   text eol=lf
+*.yml      text eol=lf
+*.yaml     text eol=lf
+*.json     text eol=lf
+.env.example text eol=lf
+*.ps1      text eol=crlf
+*.md       text

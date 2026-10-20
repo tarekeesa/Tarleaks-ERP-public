@@ -1,0 +1,58 @@
+# Puts the document editor (ONLYOFFICE Document Server) at <address>/onlyoffice/
+# on the ERP's one address. Run by the `onlyoffice-proxy` service; the image
+# fills ${TARLEAKS_URL} in from .env when it starts (nothing else is replaced).
+#
+# Why a proxy and not a plain gateway route: the editor builds its own links
+# (scripts, cached files, the co-editing connection) from the address the
+# browser used. Sitting under a path, it must be told that path in
+# X-Forwarded-Host, and the gateway cannot write the browser's address into a
+# header; this can.
+
+map $http_upgrade $connection_upgrade {
+  default upgrade;
+  ''      close;
+}
+
+server {
+  listen 8088;
+  server_name _;
+  client_max_body_size 100m;
+
+  # Docker's name server: `onlyoffice` is looked up on each request, so this
+  # starts even while the editor is still starting (the first start takes a
+  # minute or two) and follows it when it is recreated.
+  resolver 127.0.0.11 valid=5s ipv6=off;
+  set $editor http://onlyoffice:80;
+
+  # The scheme the browser used: https when TARLEAKS_URL says so (an HTTPS
+  # reverse proxy in front of the ERP), otherwise the one this request used.
+  set $public_url "${TARLEAKS_URL}";
+  set $public_scheme $scheme;
+  if ($public_url ~* "^https:") {
+    set $public_scheme https;
+  }
+
+  location = /proxy-health { return 200 "ok"; }
+
+  location = /onlyoffice { return 301 /onlyoffice/; }
+
+  location /onlyoffice/ {
+    rewrite ^/onlyoffice/(.*)$ /$1 break;
+    proxy_pass $editor;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection $connection_upgrade;
+    proxy_set_header Host $http_host;
+    proxy_set_header X-Forwarded-Host $http_host/onlyoffice;
+    proxy_set_header X-Forwarded-Proto $public_scheme;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Real-IP $remote_addr;
+    # Co-editing keeps a connection open for as long as a document is open.
+    proxy_read_timeout 3600s;
+    proxy_send_timeout 3600s;
+    # The editor streams some answers (AI replies): pass them on as they come.
+    proxy_buffering off;
+  }
+
+  location / { return 404; }
+}

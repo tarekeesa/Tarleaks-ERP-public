@@ -1,0 +1,653 @@
+# Tarleaks ERP gateway routes (Traefik file provider).
+#
+# Every request first has the identity headers removed, so a client can never
+# claim a workspace or user on its own. Signed-in routes then ask the auth
+# service who the caller is (license-check), which sets those headers again.
+# There is no /api/platform route: a self-hosted installation has no platform
+# console. Uploaded files go to the bundled store under /<bucket>/.
+http:
+  middlewares:
+    strip-identity:
+      headers:
+        customRequestHeaders:
+          X-Tenant-Id: ""
+          X-Tenant-Slug: ""
+          X-User-Id: ""
+          X-User-Email: ""
+          X-User-Roles: ""
+          X-Permission-Set: ""
+          X-Permissions: ""
+          X-License-Modules: ""
+          X-License-Plan: ""
+          X-Is-Super-Admin: ""
+          X-Actor-User-Id: ""
+          X-Actor-Type: ""
+          X-Api-Token-Id: ""
+          X-Sandbox-Mode: ""
+          X-Internal-Token: ""
+          X-Erp-Actor: ""
+    license-check:
+      forwardAuth:
+        # Through the keep-alive proxy (docker-compose.yml, `authproxy`): the
+        # gateway's own client would open a connection per request and run out
+        # of ports under load (QA-PERF-04).
+        address: http://authproxy:8099/internal/authorize
+        trustForwardHeader: true
+        authResponseHeaders:
+          - X-Tenant-Id
+          - X-User-Id
+          - X-User-Roles
+          - X-Permission-Set
+          - X-Permissions
+          - X-License-Modules
+          - X-License-Plan
+          - X-Is-Super-Admin
+          - X-Actor-User-Id
+          - X-Actor-Type
+          - X-Api-Token-Id
+          - X-Sandbox-Mode
+    public-rate-limit:
+      rateLimit:
+        average: 60
+        burst: 30
+    # The supplier portal's sign-in codes (request and check) and its
+    # registration forms get tighter limits per address than the rest of the
+    # portal: they are what a script would hammer. The service keeps its own
+    # limits as well (per account, per mailbox, per link).
+    procurement-public-otp:
+      rateLimit:
+        period: 1m
+        average: 6
+        burst: 10
+        sourceCriterion:
+          ipStrategy:
+            depth: 0
+    procurement-public-register:
+      rateLimit:
+        period: 1m
+        average: 10
+        burst: 20
+        sourceCriterion:
+          ipStrategy:
+            depth: 0
+    # The signer page's one-time codes (request and check): what a script would
+    # hammer. The service keeps its own limits per link and per signer.
+    contracts-public-otp:
+      rateLimit:
+        period: 1m
+        average: 6
+        burst: 10
+        sourceCriterion:
+          ipStrategy:
+            depth: 0
+    # The public "check a signed copy" form: a lookup, so a looser limit than
+    # the code routes.
+    contracts-public-verify:
+      rateLimit:
+        period: 1m
+        average: 30
+        burst: 30
+        sourceCriterion:
+          ipStrategy:
+            depth: 0
+    # HTTPS only (TARLEAKS_TLS=letsencrypt|cloudflare): browsers remember for a
+    # year to use https:// for this name. Attached by config/https/*.yml to the
+    # 443 entry point; never used on plain http, where it would lock people
+    # out of a local installation.
+    hsts:
+      headers:
+        stsSeconds: 31536000
+        stsIncludeSubdomains: false
+    security-headers:
+      headers:
+        contentTypeNosniff: true
+        referrerPolicy: strict-origin-when-cross-origin
+        frameDeny: false
+        customResponseHeaders:
+          X-Powered-By: ""
+          # No server name or version for a scanner to match.
+          Server: ""
+    # The web app's pages: no other website may show them inside a frame
+    # (clickjacking). 'self', not 'none': the app frames its own previews.
+    # Only frame-ancestors: a fuller policy (script-src, …) would break the
+    # app's own loading, which newer web images set themselves. Same values
+    # as the product's web image.
+    web-headers:
+      headers:
+        contentTypeNosniff: true
+        referrerPolicy: strict-origin-when-cross-origin
+        customFrameOptionsValue: SAMEORIGIN
+        contentSecurityPolicy: "frame-ancestors 'self'"
+        customResponseHeaders:
+          X-Powered-By: ""
+          Server: ""
+    # Public Insights share links answer data to anyone holding the link; no
+    # other website may read it from a visitor's browser.
+    no-cors:
+      headers:
+        customResponseHeaders:
+          Access-Control-Allow-Origin: ""
+          Access-Control-Allow-Credentials: ""
+    # Clock-in machines and kiosk tablets (/api/attendance/public/, /iclock/,
+    # /zk/) send a key of their own, never a sign-in, so these routes skip
+    # license-check; the attendance service checks the key and the licence.
+    # 300 requests a minute per address, burst 100: every machine in an office
+    # can share one address, and a busy door is a few punches a minute.
+    attendance-public-rate-limit:
+      rateLimit:
+        period: 1m
+        average: 300
+        burst: 100
+        sourceCriterion:
+          ipStrategy:
+            depth: 0
+    # At most 20 requests in flight per address, so one address's slow
+    # uploads cannot tie up the service.
+    attendance-public-inflight:
+      inFlightReq:
+        amount: 20
+        sourceCriterion:
+          ipStrategy:
+            depth: 0
+    # ZKTeco "Cloud server" (ADMS), serial-number address: /iclock/...
+    attendance-iclock-rewrite:
+      replacePathRegex:
+        regex: "^/iclock/(.*)"
+        replacement: "/api/attendance/public/v1/adms-sn/iclock/$1"
+    # ZKTeco "Cloud server" (ADMS), key address: /zk/atd_<key>/iclock/...
+    # Any other /zk/ address is not rewritten and gets a plain 404.
+    attendance-zk-rewrite:
+      replacePathRegex:
+        regex: "^/zk/(atd_[a-z2-7]{48})/iclock/(.*)"
+        replacement: "/api/attendance/public/v1/adms/$1/iclock/$2"
+
+  routers:
+    auth:
+      rule: "PathPrefix(`/api/auth`)"
+      service: auth
+      priority: 10
+      middlewares: [strip-identity, license-check, security-headers]
+    hr:
+      rule: "PathPrefix(`/api/hr`) || PathPrefix(`/api/recruitment`)"
+      service: hr
+      priority: 10
+      middlewares: [strip-identity, license-check, security-headers]
+    attendance:
+      rule: "PathPrefix(`/api/attendance`)"
+      service: attendance
+      priority: 10
+      middlewares: [strip-identity, license-check, security-headers]
+    payroll:
+      rule: "PathPrefix(`/api/payroll`)"
+      service: payroll
+      priority: 10
+      middlewares: [strip-identity, license-check, security-headers]
+    accounting:
+      rule: "PathPrefix(`/api/accounting`)"
+      service: accounting
+      priority: 10
+      middlewares: [strip-identity, license-check, security-headers]
+    activities:
+      rule: "PathPrefix(`/api/activities`)"
+      service: activities
+      priority: 10
+      middlewares: [strip-identity, license-check, security-headers]
+    gamification:
+      rule: "PathPrefix(`/api/gamification`)"
+      service: gamification
+      priority: 10
+      middlewares: [strip-identity, license-check, security-headers]
+    notifications:
+      rule: "PathPrefix(`/api/notifications`)"
+      service: notifications
+      priority: 10
+      middlewares: [strip-identity, license-check, security-headers]
+    documents:
+      rule: "PathPrefix(`/api/documents`)"
+      service: documents
+      priority: 10
+      middlewares: [strip-identity, license-check, security-headers]
+    project_management:
+      rule: "PathPrefix(`/api/project`)"
+      service: project_management
+      priority: 10
+      middlewares: [strip-identity, license-check, security-headers]
+    lms:
+      rule: "PathPrefix(`/api/lms`)"
+      service: lms
+      priority: 10
+      middlewares: [strip-identity, license-check, security-headers]
+    reports:
+      rule: "PathPrefix(`/api/reports`)"
+      service: reports
+      priority: 10
+      middlewares: [strip-identity, license-check, security-headers]
+    imtithal:
+      rule: "PathPrefix(`/api/imtithal`)"
+      service: imtithal
+      priority: 10
+      middlewares: [strip-identity, license-check, security-headers]
+    crm:
+      rule: "PathPrefix(`/api/crm`)"
+      service: crm
+      priority: 10
+      middlewares: [strip-identity, license-check, security-headers]
+    inventory:
+      rule: "PathPrefix(`/api/inventory`)"
+      service: inventory
+      priority: 10
+      middlewares: [strip-identity, license-check, security-headers]
+    sales_orders:
+      rule: "PathPrefix(`/api/sales-orders`)"
+      service: sales_orders
+      priority: 10
+      middlewares: [strip-identity, license-check, security-headers]
+    assets:
+      rule: "PathPrefix(`/api/assets`)"
+      service: assets
+      priority: 10
+      middlewares: [strip-identity, license-check, security-headers]
+    diagrams:
+      rule: "PathPrefix(`/api/diagrams`)"
+      service: diagrams
+      priority: 10
+      middlewares: [strip-identity, license-check, security-headers]
+    helpdesk:
+      rule: "PathPrefix(`/api/helpdesk`) || PathPrefix(`/api/support`)"
+      service: helpdesk
+      priority: 10
+      middlewares: [strip-identity, license-check, security-headers]
+    pdftools:
+      rule: "PathPrefix(`/api/pdftools`)"
+      service: pdftools
+      priority: 10
+      middlewares: [strip-identity, license-check, security-headers]
+    fleet:
+      rule: "PathPrefix(`/api/fleet`)"
+      service: fleet
+      priority: 10
+      middlewares: [strip-identity, license-check, security-headers]
+    correspondence:
+      rule: "PathPrefix(`/api/correspondence`)"
+      service: correspondence
+      priority: 10
+      middlewares: [strip-identity, license-check, security-headers]
+    parties:
+      rule: "PathPrefix(`/api/parties`)"
+      service: parties
+      priority: 10
+      middlewares: [strip-identity, license-check, security-headers]
+    insights:
+      rule: "PathPrefix(`/api/insights`)"
+      service: insights
+      priority: 10
+      middlewares: [strip-identity, license-check, security-headers]
+    chat:
+      rule: "PathPrefix(`/api/chat`)"
+      service: chat
+      priority: 10
+      middlewares: [strip-identity, license-check, security-headers]
+    ecommerce:
+      rule: "PathPrefix(`/api/ecommerce`)"
+      service: ecommerce
+      priority: 10
+      middlewares: [strip-identity, license-check, security-headers]
+    pos:
+      rule: "PathPrefix(`/api/pos`)"
+      service: pos
+      priority: 10
+      middlewares: [strip-identity, license-check, security-headers]
+    rental:
+      rule: "PathPrefix(`/api/rental`)"
+      service: rental
+      priority: 10
+      middlewares: [strip-identity, license-check, security-headers]
+    procurement:
+      rule: "PathPrefix(`/api/procurement`)"
+      service: procurement
+      priority: 10
+      middlewares: [strip-identity, license-check, security-headers]
+    construction:
+      rule: "PathPrefix(`/api/construction`)"
+      service: construction
+      priority: 10
+      middlewares: [strip-identity, license-check, security-headers]
+    contracts:
+      rule: "PathPrefix(`/api/contracts`)"
+      service: contracts
+      priority: 10
+      middlewares: [strip-identity, license-check, security-headers]
+    subscriptions:
+      rule: "PathPrefix(`/api/subscriptions`)"
+      service: subscriptions
+      priority: 10
+      middlewares: [strip-identity, license-check, security-headers]
+    iso42001:
+      rule: "PathPrefix(`/api/iso42001`)"
+      service: iso42001
+      priority: 10
+      middlewares: [strip-identity, license-check, security-headers]
+    auth-public:
+      # Exact paths: anything else under /api/auth is signed in (license-check
+      # sets the workspace headers). SSO and SAML: only start and callback are
+      # public; their settings (/sso/config, /saml/config) need the admin.
+      # The mobile-app and security-reset paths exist from release 1.2.0.
+      rule: "Path(`/api/auth/login`) || PathPrefix(`/api/auth/login/`) || Path(`/api/auth/logout`) || Path(`/api/auth/refresh`) || Path(`/api/auth/handoff/exchange`) || Path(`/api/auth/healthz`) || PathPrefix(`/api/auth/password/`) || Path(`/api/auth/sso/start`) || Path(`/api/auth/sso/callback`) || Path(`/api/auth/saml/start`) || Path(`/api/auth/saml/callback`) || PathRegexp(`^/api/auth/branding/[^/]+/[^/]+$`) || PathRegexp(`^/api/auth/tenant/theme/[^/]+$`) || Path(`/api/auth/installation`) || PathPrefix(`/api/auth/installation/`) || Path(`/api/auth/point/claim`) || Path(`/api/auth/mobile/find-workspaces`) || PathRegexp(`^/api/auth/mobile/invites/[A-Za-z0-9]+/check$`) || Path(`/api/auth/security-reset/request`) || Path(`/api/auth/security-reset/peek`) || Path(`/api/auth/security-reset/redeem`) || Path(`/api/auth/oidc/.well-known/openid-configuration`) || Path(`/api/auth/oidc/jwks`) || Path(`/api/auth/oidc/authorize`) || Path(`/api/auth/oidc/token`) || Path(`/api/auth/oidc/userinfo`)"
+      service: auth
+      priority: 100
+      middlewares: [strip-identity, public-rate-limit, security-headers]
+    careers-public:
+      # The careers page and job applications only. Other /api/public/<app>
+      # paths have routers of their own below.
+      rule: "PathPrefix(`/api/public/jobs`) || PathPrefix(`/api/public/recruitment`)"
+      service: hr
+      priority: 100
+      middlewares: [strip-identity, public-rate-limit, security-headers]
+    documents-public:
+      rule: "PathPrefix(`/api/public/documents`)"
+      service: documents
+      priority: 110
+      middlewares: [strip-identity, public-rate-limit, security-headers]
+    notifications-public:
+      # EXACT paths: a prefix widened to /api/notifications/webhooks (the
+      # signed-in webhook settings), which then never loaded.
+      rule: "Path(`/api/notifications/unsubscribe`) || Path(`/api/notifications/oauth/google/callback`) || Path(`/api/notifications/oauth/microsoft/callback`)"
+      service: notifications
+      priority: 120
+      middlewares: [strip-identity, public-rate-limit, security-headers]
+    documents-stream:
+      # The document viewer and the OnlyOffice editor fetch and save a file
+      # with a signed token in the address (no sign-in by design); the
+      # service checks the token.
+      rule: "PathPrefix(`/api/documents/onlyoffice/stream/`) || PathPrefix(`/api/documents/onlyoffice/callback/`)"
+      service: documents
+      priority: 120
+      middlewares: [strip-identity, security-headers]
+    project-public:
+      # Client share links and the public request form of Projects.
+      rule: "PathPrefix(`/api/project/public/share`) || PathPrefix(`/api/project/intake/public`)"
+      service: project_management
+      priority: 120
+      middlewares: [strip-identity, public-rate-limit, security-headers]
+    insights-public:
+      # Insights share links for people outside the company.
+      rule: "PathPrefix(`/api/insights/public/`)"
+      service: insights
+      priority: 120
+      middlewares: [strip-identity, public-rate-limit, no-cors, security-headers]
+    lms-public:
+      rule: "PathPrefix(`/api/public/lms`)"
+      service: lms
+      priority: 110
+      middlewares: [strip-identity, public-rate-limit, security-headers]
+    gamification-public:
+      rule: "PathPrefix(`/api/public/gamification`)"
+      service: gamification
+      priority: 110
+      middlewares: [strip-identity, public-rate-limit, security-headers]
+    activities-public:
+      # Replies to a meeting invitation from the e-mail (accept / decline).
+      rule: "PathPrefix(`/api/activities/invite/respond`)"
+      service: activities
+      priority: 120
+      middlewares: [strip-identity, public-rate-limit, security-headers]
+    sales-orders-public:
+      # From release 1.2.0 (an older release answers 404 here).
+      rule: "PathPrefix(`/api/sales-orders/public/`)"
+      service: sales_orders
+      priority: 120
+      middlewares: [strip-identity, public-rate-limit, security-headers]
+    fleet-public:
+      # From release 1.2.0 (an older release answers 404 here).
+      rule: "PathPrefix(`/api/fleet/public/`)"
+      service: fleet
+      priority: 120
+      middlewares: [strip-identity, public-rate-limit, security-headers]
+    accounting-portal:
+      rule: "PathPrefix(`/api/accounting/portal/`) || PathPrefix(`/api/accounting/public/einvoicing/`)"
+      service: accounting
+      priority: 100
+      middlewares: [strip-identity, public-rate-limit, security-headers]
+    crm-portal:
+      rule: "PathPrefix(`/api/portal`)"
+      service: crm
+      priority: 100
+      middlewares: [strip-identity, public-rate-limit, security-headers]
+    chat-public:
+      rule: "Path(`/api/chat/ws`) || Path(`/api/chat/healthz`)"
+      service: chat
+      priority: 120
+      middlewares: [strip-identity, public-rate-limit, security-headers]
+    helpdesk-public:
+      rule: "PathPrefix(`/api/helpdesk/public`)"
+      service: helpdesk
+      priority: 110
+      middlewares: [strip-identity, public-rate-limit, security-headers]
+    ecommerce-public:
+      rule: "PathPrefix(`/api/ecommerce/public/v1/`)"
+      service: ecommerce
+      priority: 120
+      middlewares: [strip-identity, public-rate-limit, security-headers]
+    procurement-public:
+      # Supplier portal: no sign-in and no licence check at the gateway. The
+      # service resolves the company from the link or the address and answers
+      # the same 404 for anything it does not know. Above careers-public (100).
+      rule: "PathPrefix(`/api/public/procurement/`)"
+      service: procurement
+      priority: 120
+      middlewares: [strip-identity, public-rate-limit, security-headers]
+    procurement-public-otp:
+      # Asking for and checking a one-time sign-in code. Above procurement-public.
+      rule: "PathRegexp(`^/api/public/procurement/[a-z0-9-]+/otp/(request|verify)$`)"
+      service: procurement
+      priority: 130
+      middlewares: [strip-identity, procurement-public-otp, security-headers]
+    procurement-public-register:
+      # A company applying to become a supplier (the open form, an invitation
+      # link, and that form's file uploads). Above procurement-public.
+      rule: "Method(`POST`) && PathRegexp(`^/api/public/procurement/([a-z0-9-]+/register|register/[A-Za-z0-9_-]+(/uploads)?)$`)"
+      service: procurement
+      priority: 130
+      middlewares: [strip-identity, procurement-public-register, security-headers]
+    procurement-public-register-uploads:
+      # The open registration form's file uploads (POST /:tenant/uploads). A
+      # signed-in supplier's bid uploads (/me/uploads) stay on the portal limit.
+      rule: "Method(`POST`) && PathRegexp(`^/api/public/procurement/[a-z0-9-]+/uploads$`) && !Path(`/api/public/procurement/me/uploads`)"
+      service: procurement
+      priority: 130
+      middlewares: [strip-identity, procurement-public-register, security-headers]
+    contracts-public:
+      # Signer page, signed PDF and verify form: no sign-in and no licence check
+      # at the gateway. The service resolves the workspace from the signer link
+      # and answers the same 404 for anything it does not know. Above
+      # careers-public (100).
+      rule: "PathPrefix(`/api/public/contracts/`)"
+      service: contracts
+      priority: 120
+      middlewares: [strip-identity, public-rate-limit, security-headers]
+    contracts-public-otp:
+      # Asking for and checking a one-time code, and starting a UAE PASS or
+      # Nafath sign-in. Above contracts-public.
+      rule: "PathRegexp(`^/api/public/contracts/sign/[A-Za-z0-9_-]+/(otp/(request|verify)|idp/[a-z_]+/start)$`)"
+      service: contracts
+      priority: 130
+      middlewares: [strip-identity, contracts-public-otp, security-headers]
+    contracts-public-verify:
+      # The signed-copy check form. Above contracts-public.
+      rule: "PathRegexp(`^/api/public/contracts/[a-z0-9-]+/verify$`)"
+      service: contracts
+      priority: 125
+      middlewares: [strip-identity, contracts-public-verify, security-headers]
+    subscriptions-public:
+      rule: "PathPrefix(`/api/subscriptions/public/`)"
+      service: subscriptions
+      priority: 120
+      middlewares: [strip-identity, public-rate-limit, security-headers]
+    attendance-public:
+      # Clock-in machines (punch API, ZKTeco, Hikvision) and paired kiosk
+      # tablets. See docs/attendance-machines.md.
+      rule: "PathPrefix(`/api/attendance/public/`)"
+      service: attendance
+      priority: 120
+      middlewares: [strip-identity, attendance-public-rate-limit, attendance-public-inflight, security-headers]
+    attendance-iclock:
+      rule: "PathPrefix(`/iclock/`)"
+      service: attendance
+      priority: 120
+      middlewares: [strip-identity, attendance-public-rate-limit, attendance-public-inflight, attendance-iclock-rewrite, security-headers]
+    attendance-zk:
+      rule: "PathPrefix(`/zk/`)"
+      service: attendance
+      priority: 120
+      middlewares: [strip-identity, attendance-public-rate-limit, attendance-public-inflight, attendance-zk-rewrite, security-headers]
+    files:
+      # Browser uploads and downloads with signed links. The store checks the
+      # signature; the gateway only passes the request through unchanged.
+      rule: 'PathPrefix(`/{{ env "STORAGE_BUCKET" }}/`)'
+      service: objects
+      priority: 200
+    api-fallback:
+      # Any other /api address (including /api/platform, which does not exist
+      # on an installation) gets the auth service's plain 404, never the web
+      # app's redirect.
+      rule: "PathPrefix(`/api/`)"
+      service: auth
+      priority: 2
+      middlewares: [strip-identity, security-headers]
+    drawio:
+      # The optional draw.io editor (compose profile `drawio`). Static pages,
+      # no sign-in: the Diagrams app hands it the drawing in the browser.
+      # Answers 502 while the add-on is off.
+      rule: "Path(`/drawio`) || PathPrefix(`/drawio/`)"
+      service: drawio
+      priority: 150
+      middlewares: [strip-identity, security-headers]
+    onlyoffice:
+      # The document editor (compose profile `onlyoffice`), reached through its
+      # small proxy, which tells it the /onlyoffice/ path it sits under. No
+      # sign-in here: the editor's own token (the shared secret) is the check,
+      # and the files it opens are fetched by it from the documents service
+      # inside Docker. Answers 502 while the add-on is off or starting.
+      rule: "Path(`/onlyoffice`) || PathPrefix(`/onlyoffice/`)"
+      service: onlyoffice
+      priority: 150
+      middlewares: [strip-identity, security-headers]
+    web:
+      rule: "PathPrefix(`/`)"
+      service: web
+      priority: 1
+      middlewares: [web-headers]
+
+  services:
+    auth:
+      loadBalancer:
+        servers: [{ url: "http://auth:8001" }]
+    hr:
+      loadBalancer:
+        servers: [{ url: "http://hr:8002" }]
+    attendance:
+      loadBalancer:
+        servers: [{ url: "http://attendance:8003" }]
+    payroll:
+      loadBalancer:
+        servers: [{ url: "http://payroll:8004" }]
+    accounting:
+      loadBalancer:
+        servers: [{ url: "http://accounting:8005" }]
+    activities:
+      loadBalancer:
+        servers: [{ url: "http://activities:8006" }]
+    gamification:
+      loadBalancer:
+        servers: [{ url: "http://gamification:8007" }]
+    notifications:
+      loadBalancer:
+        servers: [{ url: "http://notifications:8008" }]
+    documents:
+      loadBalancer:
+        servers: [{ url: "http://documents:8009" }]
+    project_management:
+      loadBalancer:
+        servers: [{ url: "http://project_management:8011" }]
+    lms:
+      loadBalancer:
+        servers: [{ url: "http://lms:8012" }]
+    reports:
+      loadBalancer:
+        servers: [{ url: "http://reports:8014" }]
+    imtithal:
+      loadBalancer:
+        servers: [{ url: "http://imtithal:8015" }]
+    crm:
+      loadBalancer:
+        servers: [{ url: "http://crm:8016" }]
+    inventory:
+      loadBalancer:
+        servers: [{ url: "http://inventory:8017" }]
+    sales_orders:
+      loadBalancer:
+        servers: [{ url: "http://sales_orders:8018" }]
+    assets:
+      loadBalancer:
+        servers: [{ url: "http://assets:8022" }]
+    diagrams:
+      loadBalancer:
+        servers: [{ url: "http://diagrams:8024" }]
+    helpdesk:
+      loadBalancer:
+        servers: [{ url: "http://helpdesk:8028" }]
+    pdftools:
+      loadBalancer:
+        servers: [{ url: "http://pdftools:8029" }]
+    fleet:
+      loadBalancer:
+        servers: [{ url: "http://fleet:8030" }]
+    correspondence:
+      loadBalancer:
+        servers: [{ url: "http://correspondence:8031" }]
+    parties:
+      loadBalancer:
+        servers: [{ url: "http://parties:8032" }]
+    insights:
+      loadBalancer:
+        servers: [{ url: "http://insights:8033" }]
+    chat:
+      loadBalancer:
+        servers: [{ url: "http://chat:8035" }]
+    ecommerce:
+      loadBalancer:
+        servers: [{ url: "http://ecommerce:8036" }]
+    pos:
+      loadBalancer:
+        servers: [{ url: "http://pos:8037" }]
+    rental:
+      loadBalancer:
+        servers: [{ url: "http://rental:8038" }]
+    procurement:
+      loadBalancer:
+        servers: [{ url: "http://procurement:8042" }]
+    construction:
+      loadBalancer:
+        servers: [{ url: "http://construction:8041" }]
+    contracts:
+      loadBalancer:
+        servers: [{ url: "http://contracts:8043" }]
+    subscriptions:
+      loadBalancer:
+        servers: [{ url: "http://subscriptions:8039" }]
+    iso42001:
+      loadBalancer:
+        servers: [{ url: "http://iso42001:8040" }]
+    objects:
+      loadBalancer:
+        passHostHeader: true
+        servers: [{ url: "http://objects:7070" }]
+    web:
+      loadBalancer:
+        servers: [{ url: "http://web:8080" }]
+    drawio:
+      loadBalancer:
+        servers: [{ url: "http://drawio:8080" }]
+    onlyoffice:
+      loadBalancer:
+        servers: [{ url: "http://onlyoffice-proxy:8088" }]

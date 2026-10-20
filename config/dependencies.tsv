@@ -1,0 +1,45 @@
+# Self-hosted edition: which app needs which. GENERATED — do not edit.
+# Source: shared::license::{requires, requires_deep, BASE_MODULES} and
+# deploy/selfhosted/units.tsv. Regenerate after changing either:
+#   UPDATE_SELFHOSTED_SHEET=1 cargo test -p shared selfhosted_sheet
+# The test fails when this file differs from the code.
+#
+# module: the licence module; unit: the image that serves it;
+# needs: what it needs directly; needs_all: everything it needs, all the
+# way down, without the base modules (every installation has those);
+# base: held by every workspace.
+#
+# module	unit	needs	needs_all	base
+hr	hr	documents,activities,notifications	-	no
+recruitment	hr	hr,documents	hr	no
+attendance	attendance	hr	hr	no
+payroll	payroll	hr,accounting	hr,accounting	no
+accounting	accounting	-	-	no
+activities	activities	-	-	yes
+notifications	notifications	-	-	yes
+documents	documents	-	-	yes
+reports	reports	-	-	yes
+insights	insights	-	-	yes
+parties	parties	-	-	yes
+crm	crm	documents,parties,ecommerce	ecommerce	no
+inventory	inventory	-	-	no
+sales_orders	sales_orders	crm,inventory,accounting,parties,ecommerce	ecommerce,crm,inventory,accounting	no
+chat	chat	notifications	-	no
+ecommerce	ecommerce	parties,documents	-	no
+project_management	project_management	activities,documents	-	no
+lms	lms	hr,documents	hr	no
+gamification	gamification	hr	hr	no
+assets	assets	parties	-	no
+helpdesk	helpdesk	activities,documents,notifications	-	no
+fleet	fleet	hr,documents,notifications,activities,parties	hr	no
+correspondence	correspondence	documents,notifications,activities,parties	-	no
+pos	pos	ecommerce,parties	ecommerce	no
+rental	rental	ecommerce,parties,documents,activities	ecommerce	no
+subscriptions	subscriptions	ecommerce,parties,notifications	ecommerce	no
+procurement	procurement	parties,activities	-	no
+construction	construction	project_management,parties,documents,activities	project_management	no
+contracts	contracts	parties,documents	-	no
+pdftools	pdftools	documents	-	no
+diagrams	diagrams	-	-	no
+imtithal	imtithal	documents,activities	-	no
+iso42001	iso42001	imtithal	imtithal	no

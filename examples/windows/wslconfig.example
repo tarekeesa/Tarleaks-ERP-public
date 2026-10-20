@@ -1,0 +1,11 @@
+# Copy this file to  %UserProfile%\.wslconfig  (for example C:\Users\you\.wslconfig).
+# It limits the memory and CPUs the WSL 2 engine behind Docker Desktop may use.
+# Apply it: run  wsl --shutdown  in PowerShell, then start Docker Desktop again.
+#
+# memory   should be at least what your profile needs (small 4 GB, standard 8 GB,
+#          full 16 GB), and leave about 2 GB for Windows itself.
+# The installer picks the profile from the memory Docker can use, so set this first.
+[wsl2]
+memory=8GB
+processors=4
+swap=2GB

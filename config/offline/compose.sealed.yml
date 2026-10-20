@@ -1,0 +1,18 @@
+# TARLEAKS_OFFLINE=sealed — nothing inside Docker can leave this machine.
+#
+# Added to COMPOSE_FILE by `./tarleaks offline sealed` (never by hand). Every
+# service sits on an `internal` network, which Docker gives no route out of:
+# no internet, and no other machine on the office network either (so no
+# outside mail relay or NAS). Only the gateway is also on `edge`, to publish
+# its port; it makes no outside connections itself (no version check, no
+# usage statistics: docker-compose.yml). Use `./tarleaks offline on` instead
+# when the ERP must still reach a mail relay or a NAS on your network.
+# docs/offline.md
+networks:
+  default:
+    internal: true
+  edge: {}
+
+services:
+  gateway:
+    networks: [default, edge]

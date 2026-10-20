@@ -1,0 +1,18 @@
+# Opens the bundled PostgreSQL to a database tool (pgAdmin, DBeaver, a
+# reporting tool). Without this file the database publishes no port at all.
+#
+# Copy this file next to docker-compose.yml and name it exactly
+# docker-compose.override.yml (or add the `postgres:` block below to the one
+# you already have), then ./tarleaks restart.
+#
+# Who can connect is decided by two lines in .env:
+#   POSTGRES_BIND=127.0.0.1   this machine only (the default; reach it from
+#                             elsewhere through an SSH tunnel, see README.md)
+#   POSTGRES_BIND=192.168.1.20  one network address of this machine: everyone
+#                             who can reach that address can try to sign in
+#   POSTGRES_PUBLISH_PORT=5432
+# Never 0.0.0.0 on a machine that is on the internet.
+services:
+  postgres:
+    ports:
+      - "${POSTGRES_BIND:-127.0.0.1}:${POSTGRES_PUBLISH_PORT:-5432}:5432"

@@ -1,0 +1,24 @@
+# Backs up Tarleaks ERP once, then removes nightly backups older than 14 days.
+# Install: sudo cp tarleaks-backup.service tarleaks-backup.timer /etc/systemd/system/
+# Edit the paths below if the kit is not in /opt/tarleaks-erp, and User=/Group=.
+[Unit]
+Description=Back up Tarleaks ERP (database, files, settings)
+Requires=docker.service
+Wants=network-online.target
+After=docker.service network-online.target
+
+[Service]
+Type=oneshot
+# The account that owns the kit folder and is in the "docker" group, so the
+# backups belong to the person who reads and restores them. (Running as root also
+# works: the backup is then handed to the owner of the kit folder.)
+User=tarleaks
+Group=docker
+WorkingDirectory=/opt/tarleaks-erp
+ExecStart=/opt/tarleaks-erp/tarleaks backup
+# Only the dated nightly folders (20...) are cleaned up: pre-upgrade-*,
+# pre-restore-* and folders you renamed (monthly-*) are kept. The leading "-"
+# means a failed clean-up does not mark the backup as failed.
+ExecStartPost=-/usr/bin/find /opt/tarleaks-erp/backups -mindepth 1 -maxdepth 1 -type d -name 20[0-9]* -mtime +14 -exec rm -rf {} +
+# Copy the new backup off this machine here, for example:
+#ExecStartPost=/usr/bin/rsync -a /opt/tarleaks-erp/backups/ backup-host:/srv/tarleaks-backups/

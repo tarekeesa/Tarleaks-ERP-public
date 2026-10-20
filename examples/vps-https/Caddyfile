@@ -1,0 +1,17 @@
+# Caddy in front of Tarleaks ERP: automatic HTTPS with Let's Encrypt.
+#
+# Copy this file next to docker-compose.yml (the kit's top folder).
+# {$TARLEAKS_HOST} is your domain name. docker-compose.override.yml passes it in
+# from .env, so you do not edit it here.
+#
+# Caddy passes the Host header to the gateway unchanged, which the file store
+# needs to accept signed upload links. Do not add a header_up Host line.
+
+# Optional: an address Let's Encrypt can write to about certificate problems.
+# {
+#	email you@example.com
+# }
+
+{$TARLEAKS_HOST} {
+	reverse_proxy gateway:80
+}

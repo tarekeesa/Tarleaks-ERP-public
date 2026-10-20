@@ -1,0 +1,17 @@
+# Tarleaks ERP — apps that are not in every release: the first release that
+# publishes their image and, when an app was taken out again, the first release
+# WITHOUT it. An app not listed here exists in every release. The installers and
+# ./tarleaks leave an app out of the presets, and refuse it by name, while
+# TARLEAKS_VERSION is outside that range: its image does not exist, so
+# downloading would fail. An installation that ran a withdrawn app keeps its
+# data; the app is simply not started on that release.
+#
+# Diagram Studio is not part of the self-hosted edition from 1.2.0: it is
+# being rebuilt, and returns in a later release.
+#
+# app            first release   withdrawn in (optional; an editor of kind addon in apps.tsv counts as an app here)
+procurement      1.2.0
+construction     1.2.0
+contracts        1.2.0
+diagrams         1.0.0           1.2.0
+diagrams-engine  1.2.0           1.2.0

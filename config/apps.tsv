@@ -1,0 +1,71 @@
+# =============================================================================
+# Tarleaks ERP — the app sheet: what each app needs, and what it costs to run.
+#
+# Read by install.sh / install.ps1 and ./tarleaks apps. Choose apps with
+#   ./install.sh --apps hr,crm        (Windows: .\install.ps1 -Apps hr,crm)
+# and everything they NEED is installed with them; nothing else runs.
+#
+# Columns (separated by spaces; `-` means none; `name` is the rest of the line):
+#   app         the licence name of the app
+#   kind        platform = always runs (the ERP's own machinery)
+#               base     = always runs (every workspace holds these apps)
+#               app      = runs only when chosen, or needed by a chosen app
+#               addon    = an editor, not an app: runs next to the apps named
+#                          in `needs` while editors are on (./tarleaks editors
+#                          on|off); cannot be chosen by name
+#   unit        the service (container) that runs it; two apps may share one
+#   needs       apps it cannot work without (installed automatically). Mirrors
+#               shared::license::requires in the product; a release that
+#               changes it ships a new copy of this file. For an addon: the
+#               apps it runs for (any one of them).
+#   works_with  apps that add to it when you also have them (never automatic)
+#   aliases     other words accepted by --apps
+#   ram_mb      memory to plan for the unit, in MB, at light use (one company,
+#               tens of users). 0 = shares the unit of another app.
+#   name        what the app is called on screen
+# =============================================================================
+# app              kind      unit                needs                                        works_with                                         aliases                         ram_mb name
+postgres           platform  postgres            -                                            -                                                  -                               512    Database (PostgreSQL)
+rabbitmq           platform  rabbitmq            -                                            -                                                  -                               256    Message queue (RabbitMQ)
+redis              platform  redis               -                                            -                                                  -                               32     Cache (Redis)
+objects            platform  objects             -                                            -                                                  -                               48     File store
+gateway            platform  gateway             -                                            -                                                  -                               64     Gateway (Traefik)
+authproxy          platform  authproxy           -                                            -                                                  -                               16     Sign-in check proxy (nginx)
+web                platform  web                 -                                            -                                                  -                               32     Web app
+auth               platform  auth                -                                            -                                                  -                               128    Sign-in, users, settings, licence
+notifications      base      notifications       -                                            -                                                  email                           96     Notifications & Email
+activities         base      activities          -                                            -                                                  tasks                           96     Activities
+documents          base      documents           -                                            -                                                  dms,files                       128    Documents (DMS)
+reports            base      reports             -                                            -                                                  -                               96     Reports & BI
+parties            base      parties             -                                            -                                                  contacts                        64     Parties
+insights           base      insights            -                                            -                                                  bi                              128    Insights
+hr                 app       hr                  documents,activities,notifications           recruitment,attendance,payroll,lms,gamification    people                          128    HR
+recruitment        app       hr                  hr,documents                                 -                                                  ats,hiring                      0      Recruitment
+attendance         app       attendance          hr                                           payroll                                            time,leave                      128    Attendance
+payroll            app       payroll             hr,accounting                                attendance                                         -                               128    Payroll
+accounting         app       accounting          -                                            payroll,sales_orders,inventory,procurement         finance,ledger                  128    Accounting
+crm                app       crm                 documents,parties,ecommerce                  sales_orders,helpdesk,subscriptions,contracts      sales                           96     CRM
+ecommerce          app       ecommerce           parties,documents                            crm,pos,sales_orders                               products,store,shop             96     Products & Online Store
+sales_orders       app       sales_orders        crm,inventory,accounting,parties,ecommerce   -                                                  orders                          96     Sales Orders & Fulfilment
+inventory          app       inventory           -                                            sales_orders,procurement,pos                       stock,warehouse                 96     Inventory & Warehouse
+chat               app       chat                notifications                                -                                                  calls,messages                  96     Chat & Calls
+project_management app       project_management  activities,documents                         construction,helpdesk                              projects,pm                     96     Project Management
+lms                app       lms                 hr,documents                                 gamification                                       learning,training               128    Learning Management (LMS)
+gamification       app       gamification        hr                                           lms                                                recognition,kudos               64     Gamification
+assets             app       assets              parties                                      fleet,accounting                                   -                               64     Asset Management
+helpdesk           app       helpdesk            activities,documents,notifications           crm                                                tickets,support                 96     Helpdesk
+fleet              app       fleet               hr,documents,notifications,activities,parties assets                                            vehicles                        64     Fleet
+correspondence     app       correspondence      documents,notifications,activities,parties   -                                                  mail,letters                    96     Correspondence
+pos                app       pos                 ecommerce,parties                            inventory,accounting                               till,register                   96     Point of Sale
+rental             app       rental              ecommerce,parties,documents,activities       inventory,accounting                               rentals                         96     Rentals
+subscriptions      app       subscriptions       ecommerce,parties,notifications              crm,accounting                                     billing                         96     Subscriptions & Licensing
+procurement        app       procurement         parties,activities                           accounting,inventory,contracts                     purchasing,tenders              96     Procurement
+construction       app       construction        project_management,parties,documents,activities accounting,attendance,procurement,contracts   contracting                     96     Construction & Contracting
+contracts          app       contracts           parties,documents                            crm,procurement,construction,hr                    esign,signatures                96     Contracts & E-Signature
+pdftools           app       pdftools            documents                                    -                                                  pdf,ocr                         512    PDF Tools (with OCR)
+diagrams           app       diagrams            -                                            -                                                  -                               256    Diagram Studio
+imtithal           app       imtithal            documents,activities                         iso42001                                           iso,compliance                  128    Imtithal — ISO Compliance Suite
+iso42001           app       iso42001            imtithal                                     -                                                  -                               64     ISO/IEC 42001 — AI Management System
+onlyoffice         addon     onlyoffice          documents                                    -                                                  -                               2048   Document editor (OnlyOffice)
+drawio             addon     drawio              diagrams                                     -                                                  -                               256    Diagram editor (draw.io)
+diagrams-engine    addon     diagrams-engine     diagrams                                     -                                                  -                               192    Diagram AI engine

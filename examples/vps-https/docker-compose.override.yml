@@ -1,0 +1,36 @@
+# Adds Caddy (automatic HTTPS) in front of the Tarleaks gateway.
+#
+# Copy this file next to docker-compose.yml and name it exactly
+# docker-compose.override.yml: Docker Compose reads it by itself, so
+# ./tarleaks start, stop and upgrade include Caddy with no other change.
+#
+# Needs these lines in .env (see address.env):
+#   TARLEAKS_HOST=erp.example.com
+#   TARLEAKS_URL=https://erp.example.com
+#   HTTP_PORT=8080
+#   HTTP_BIND=127.0.0.1
+services:
+  caddy:
+    image: caddy:2.10-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      TARLEAKS_HOST: ${TARLEAKS_HOST:?TARLEAKS_HOST is not set - run ./install.sh}
+    volumes:
+      # On Red Hat, Rocky or Alma with SELinux enforcing, use ":ro,z" here.
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      gateway:
+        condition: service_healthy
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+volumes:
+  caddy_data:
+  caddy_config:

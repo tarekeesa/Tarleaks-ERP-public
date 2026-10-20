@@ -1,0 +1,14 @@
+# Tarleaks ERP nightly backup. Install with:  crontab -e   (as the user who owns the kit
+# and is in the docker group). Adjust /opt/tarleaks-erp if the kit is somewhere else.
+#
+# cron starts with a tiny PATH. Docker Desktop on macOS puts `docker` in /usr/local/bin
+# (Apple silicon with Homebrew: /opt/homebrew/bin), which cron would not find:
+PATH=/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin
+#
+# 02:15  back up (database, files, settings) into /opt/tarleaks-erp/backups/<date-time>/
+15 2 * * *  cd /opt/tarleaks-erp && ./tarleaks backup >> "$HOME/tarleaks-backup.log" 2>&1
+# 03:00  remove nightly backups older than 14 days. Only the dated folders (20...):
+#        pre-upgrade-*, pre-restore-* and folders you renamed (monthly-*) are kept.
+0 3 * * *   find /opt/tarleaks-erp/backups -mindepth 1 -maxdepth 1 -type d -name '20[0-9]*' -mtime +14 -exec rm -rf {} +
+# 03:15  copy the backups to another machine (edit the destination, or delete this line)
+#15 3 * * *  rsync -a /opt/tarleaks-erp/backups/ backup-host:/srv/tarleaks-backups/

@@ -1,0 +1,2097 @@
+{
+  "vhosts": [
+    {
+      "name": "/"
+    }
+  ],
+  "exchanges": [
+    {
+      "name": "accounting.events",
+      "vhost": "/",
+      "type": "topic",
+      "durable": true,
+      "auto_delete": false,
+      "internal": false,
+      "arguments": {}
+    },
+    {
+      "name": "assets.events",
+      "vhost": "/",
+      "type": "topic",
+      "durable": true,
+      "auto_delete": false,
+      "internal": false,
+      "arguments": {}
+    },
+    {
+      "name": "activities.events",
+      "vhost": "/",
+      "type": "topic",
+      "durable": true,
+      "auto_delete": false,
+      "internal": false,
+      "arguments": {}
+    },
+    {
+      "name": "attendance.events",
+      "vhost": "/",
+      "type": "topic",
+      "durable": true,
+      "auto_delete": false,
+      "internal": false,
+      "arguments": {}
+    },
+    {
+      "name": "auth.events",
+      "vhost": "/",
+      "type": "topic",
+      "durable": true,
+      "auto_delete": false,
+      "internal": false,
+      "arguments": {}
+    },
+    {
+      "name": "crm.events",
+      "vhost": "/",
+      "type": "topic",
+      "durable": true,
+      "auto_delete": false,
+      "internal": false,
+      "arguments": {}
+    },
+    {
+      "name": "documents.events",
+      "vhost": "/",
+      "type": "topic",
+      "durable": true,
+      "auto_delete": false,
+      "internal": false,
+      "arguments": {}
+    },
+    {
+      "name": "gamification.events",
+      "vhost": "/",
+      "type": "topic",
+      "durable": true,
+      "auto_delete": false,
+      "internal": false,
+      "arguments": {}
+    },
+    {
+      "name": "hr.events",
+      "vhost": "/",
+      "type": "topic",
+      "durable": true,
+      "auto_delete": false,
+      "internal": false,
+      "arguments": {}
+    },
+    {
+      "name": "inventory.events",
+      "vhost": "/",
+      "type": "topic",
+      "durable": true,
+      "auto_delete": false,
+      "internal": false,
+      "arguments": {}
+    },
+    {
+      "name": "lms.events",
+      "vhost": "/",
+      "type": "topic",
+      "durable": true,
+      "auto_delete": false,
+      "internal": false,
+      "arguments": {}
+    },
+    {
+      "name": "notifications.events",
+      "vhost": "/",
+      "type": "topic",
+      "durable": true,
+      "auto_delete": false,
+      "internal": false,
+      "arguments": {}
+    },
+    {
+      "name": "payroll.events",
+      "vhost": "/",
+      "type": "topic",
+      "durable": true,
+      "auto_delete": false,
+      "internal": false,
+      "arguments": {}
+    },
+    {
+      "name": "project_management.events",
+      "vhost": "/",
+      "type": "topic",
+      "durable": true,
+      "auto_delete": false,
+      "internal": false,
+      "arguments": {}
+    },
+    {
+      "name": "sales_orders.events",
+      "vhost": "/",
+      "type": "topic",
+      "durable": true,
+      "auto_delete": false,
+      "internal": false,
+      "arguments": {}
+    },
+    {
+      "name": "social.events",
+      "vhost": "/",
+      "type": "topic",
+      "durable": true,
+      "auto_delete": false,
+      "internal": false,
+      "arguments": {}
+    },
+    {
+      "name": "campaigns.events",
+      "vhost": "/",
+      "type": "topic",
+      "durable": true,
+      "auto_delete": false,
+      "internal": false,
+      "arguments": {}
+    },
+    {
+      "name": "helpdesk.events",
+      "vhost": "/",
+      "type": "topic",
+      "durable": true,
+      "auto_delete": false,
+      "internal": false,
+      "arguments": {}
+    },
+    {
+      "name": "meet.events",
+      "vhost": "/",
+      "type": "topic",
+      "durable": true,
+      "auto_delete": false,
+      "internal": false,
+      "arguments": {}
+    },
+    {
+      "name": "correspondence.events",
+      "vhost": "/",
+      "type": "topic",
+      "durable": true,
+      "auto_delete": false,
+      "internal": false,
+      "arguments": {}
+    },
+    {
+      "name": "activities.dlx",
+      "vhost": "/",
+      "type": "topic",
+      "durable": true,
+      "auto_delete": false,
+      "internal": false,
+      "arguments": {}
+    },
+    {
+      "name": "parties.events",
+      "vhost": "/",
+      "type": "topic",
+      "durable": true,
+      "auto_delete": false,
+      "internal": false,
+      "arguments": {}
+    },
+    {
+      "name": "fleet.events",
+      "vhost": "/",
+      "type": "topic",
+      "durable": true,
+      "auto_delete": false,
+      "internal": false,
+      "arguments": {}
+    },
+    {
+      "name": "insights.events",
+      "vhost": "/",
+      "type": "topic",
+      "durable": true,
+      "auto_delete": false,
+      "internal": false,
+      "arguments": {}
+    },
+    {
+      "name": "chat.events",
+      "vhost": "/",
+      "type": "topic",
+      "durable": true,
+      "auto_delete": false,
+      "internal": false,
+      "arguments": {}
+    },
+    {
+      "name": "ecommerce.events",
+      "vhost": "/",
+      "type": "topic",
+      "durable": true,
+      "auto_delete": false,
+      "internal": false,
+      "arguments": {}
+    },
+    {
+      "name": "subscriptions.events",
+      "vhost": "/",
+      "type": "topic",
+      "durable": true,
+      "auto_delete": false,
+      "internal": false,
+      "arguments": {}
+    },
+    {
+      "name": "rental.events",
+      "vhost": "/",
+      "type": "topic",
+      "durable": true,
+      "auto_delete": false,
+      "internal": false,
+      "arguments": {}
+    },
+    {
+      "name": "pos.events",
+      "vhost": "/",
+      "type": "topic",
+      "durable": true,
+      "auto_delete": false,
+      "internal": false,
+      "arguments": {}
+    }
+  ],
+  "queues": [
+    {
+      "name": "accounting.from-payroll",
+      "vhost": "/",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {}
+    },
+    {
+      "name": "hr.from-lms",
+      "vhost": "/",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {}
+    },
+    {
+      "name": "accounting.from-project_management",
+      "vhost": "/",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {}
+    },
+    {
+      "name": "accounting.from-sales_orders",
+      "vhost": "/",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {}
+    },
+    {
+      "name": "activities.from-all",
+      "vhost": "/",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {}
+    },
+    {
+      "name": "activities.from-meet",
+      "vhost": "/",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {}
+    },
+    {
+      "name": "activities.scheduler",
+      "vhost": "/",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {}
+    },
+    {
+      "name": "crm.from-accounting",
+      "vhost": "/",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {}
+    },
+    {
+      "name": "crm.from-sales_orders",
+      "vhost": "/",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {}
+    },
+    {
+      "name": "gamification.from-all",
+      "vhost": "/",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {}
+    },
+    {
+      "name": "gamification.scheduler",
+      "vhost": "/",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {}
+    },
+    {
+      "name": "inventory.from-sales_orders",
+      "vhost": "/",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {}
+    },
+    {
+      "name": "notifications.from-all",
+      "vhost": "/",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {}
+    },
+    {
+      "name": "notifications.from-project_management",
+      "vhost": "/",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {}
+    },
+    {
+      "name": "notifications.from-social",
+      "vhost": "/",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {}
+    },
+    {
+      "name": "payroll.from-attendance",
+      "vhost": "/",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {}
+    },
+    {
+      "name": "payroll.from-hr",
+      "vhost": "/",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {}
+    },
+    {
+      "name": "project_management.from-accounting",
+      "vhost": "/",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {}
+    },
+    {
+      "name": "project_management.from-hr",
+      "vhost": "/",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {}
+    },
+    {
+      "name": "sales_orders.from-crm",
+      "vhost": "/",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {}
+    },
+    {
+      "name": "project_management.from-crm",
+      "vhost": "/",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {}
+    },
+    {
+      "name": "attendance.from-pm",
+      "vhost": "/",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {}
+    },
+    {
+      "name": "activities.from-all.dlq",
+      "vhost": "/",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {}
+    },
+    {
+      "name": "parties.from-modules",
+      "vhost": "/",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {}
+    },
+    {
+      "name": "crm.from-parties",
+      "vhost": "/",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {}
+    },
+    {
+      "name": "accounting.from-parties",
+      "vhost": "/",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {}
+    },
+    {
+      "name": "sales_orders.from-parties",
+      "vhost": "/",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {}
+    },
+    {
+      "name": "correspondence.from-parties",
+      "vhost": "/",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {}
+    },
+    {
+      "name": "fleet.from-modules",
+      "vhost": "/",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {}
+    },
+    {
+      "name": "ecommerce.from-modules",
+      "vhost": "/",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {}
+    },
+    {
+      "name": "subscriptions.from-modules",
+      "vhost": "/",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {}
+    },
+    {
+      "name": "rental.from-modules",
+      "vhost": "/",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {}
+    },
+    {
+      "name": "pos.from-modules",
+      "vhost": "/",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {}
+    },
+    {
+      "name": "accounting.from-pos",
+      "vhost": "/",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {}
+    },
+    {
+      "name": "inventory.from-pos",
+      "vhost": "/",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {}
+    },
+    {
+      "name": "crm.from-ecommerce",
+      "vhost": "/",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {}
+    },
+    {
+      "name": "inventory.from-ecommerce",
+      "vhost": "/",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {}
+    },
+    {
+      "name": "sales_orders.from-ecommerce",
+      "vhost": "/",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {}
+    },
+    {
+      "name": "accounting.from-ecommerce",
+      "vhost": "/",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {}
+    },
+    {
+      "name": "inventory.from-ecommerce-orders",
+      "vhost": "/",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {}
+    },
+    {
+      "name": "accounting.from-subscriptions",
+      "vhost": "/",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {}
+    },
+    {
+      "name": "accounting.from-rental",
+      "vhost": "/",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {}
+    },
+    {
+      "name": "inventory.from-rental",
+      "vhost": "/",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {}
+    },
+    {
+      "name": "chat.from-modules",
+      "vhost": "/",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {
+        "x-message-ttl": 604800000,
+        "x-max-length": 100000
+      }
+    },
+    {
+      "name": "inventory.from-crm",
+      "vhost": "/",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {}
+    },
+    {
+      "name": "crm.from-inventory",
+      "vhost": "/",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {}
+    },
+    {
+      "name": "sales_orders.from-accounting",
+      "vhost": "/",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {}
+    },
+    {
+      "name": "inventory.from-parties",
+      "vhost": "/",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {}
+    },
+    {
+      "name": "inventory.from-accounting",
+      "vhost": "/",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {}
+    },
+    {
+      "name": "accounting.from-inventory",
+      "vhost": "/",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {}
+    },
+    {
+      "name": "accounting.from-assets",
+      "vhost": "/",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {}
+    },
+    {
+      "name": "accounting.from-auth",
+      "vhost": "/",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {}
+    },
+    {
+      "name": "accounting.from-lms",
+      "vhost": "/",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {}
+    },
+    {
+      "name": "assets.from-accounting",
+      "vhost": "/",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {}
+    },
+    {
+      "name": "assets.from-hr",
+      "vhost": "/",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {}
+    },
+    {
+      "name": "hr.from-assets",
+      "vhost": "/",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {}
+    },
+    {
+      "name": "assets.from-assets",
+      "vhost": "/",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {}
+    },
+    {
+      "name": "project_management.from-meet",
+      "vhost": "/",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {}
+    }
+  ],
+  "bindings": [
+    {
+      "source": "accounting.events",
+      "vhost": "/",
+      "destination": "activities.from-all",
+      "destination_type": "queue",
+      "routing_key": "#.activity.#",
+      "arguments": {}
+    },
+    {
+      "source": "accounting.events",
+      "vhost": "/",
+      "destination": "gamification.from-all",
+      "destination_type": "queue",
+      "routing_key": "#.event.#",
+      "arguments": {}
+    },
+    {
+      "source": "accounting.events",
+      "vhost": "/",
+      "destination": "project_management.from-accounting",
+      "destination_type": "queue",
+      "routing_key": "invoice.*",
+      "arguments": {}
+    },
+    {
+      "source": "activities.events",
+      "vhost": "/",
+      "destination": "activities.scheduler",
+      "destination_type": "queue",
+      "routing_key": "activity.#",
+      "arguments": {}
+    },
+    {
+      "source": "activities.events",
+      "vhost": "/",
+      "destination": "gamification.from-all",
+      "destination_type": "queue",
+      "routing_key": "activity.#",
+      "arguments": {}
+    },
+    {
+      "source": "attendance.events",
+      "vhost": "/",
+      "destination": "activities.from-all",
+      "destination_type": "queue",
+      "routing_key": "#.activity.#",
+      "arguments": {}
+    },
+    {
+      "source": "attendance.events",
+      "vhost": "/",
+      "destination": "gamification.from-all",
+      "destination_type": "queue",
+      "routing_key": "#.event.#",
+      "arguments": {}
+    },
+    {
+      "source": "attendance.events",
+      "vhost": "/",
+      "destination": "notifications.from-all",
+      "destination_type": "queue",
+      "routing_key": "#",
+      "arguments": {}
+    },
+    {
+      "source": "attendance.events",
+      "vhost": "/",
+      "destination": "payroll.from-attendance",
+      "destination_type": "queue",
+      "routing_key": "attendance.*",
+      "arguments": {}
+    },
+    {
+      "source": "auth.events",
+      "vhost": "/",
+      "destination": "activities.from-all",
+      "destination_type": "queue",
+      "routing_key": "#.activity.#",
+      "arguments": {}
+    },
+    {
+      "source": "auth.events",
+      "vhost": "/",
+      "destination": "notifications.from-all",
+      "destination_type": "queue",
+      "routing_key": "#",
+      "arguments": {}
+    },
+    {
+      "source": "crm.events",
+      "vhost": "/",
+      "destination": "sales_orders.from-crm",
+      "destination_type": "queue",
+      "routing_key": "crm.quote.#",
+      "arguments": {}
+    },
+    {
+      "source": "crm.events",
+      "vhost": "/",
+      "destination": "notifications.from-all",
+      "destination_type": "queue",
+      "routing_key": "crm.#",
+      "arguments": {}
+    },
+    {
+      "source": "documents.events",
+      "vhost": "/",
+      "destination": "notifications.from-all",
+      "destination_type": "queue",
+      "routing_key": "document.*",
+      "arguments": {}
+    },
+    {
+      "source": "gamification.events",
+      "vhost": "/",
+      "destination": "gamification.scheduler",
+      "destination_type": "queue",
+      "routing_key": "#",
+      "arguments": {}
+    },
+    {
+      "source": "gamification.events",
+      "vhost": "/",
+      "destination": "notifications.from-all",
+      "destination_type": "queue",
+      "routing_key": "#",
+      "arguments": {}
+    },
+    {
+      "source": "hr.events",
+      "vhost": "/",
+      "destination": "activities.from-all",
+      "destination_type": "queue",
+      "routing_key": "#.activity.#",
+      "arguments": {}
+    },
+    {
+      "source": "hr.events",
+      "vhost": "/",
+      "destination": "gamification.from-all",
+      "destination_type": "queue",
+      "routing_key": "#.event.#",
+      "arguments": {}
+    },
+    {
+      "source": "hr.events",
+      "vhost": "/",
+      "destination": "notifications.from-all",
+      "destination_type": "queue",
+      "routing_key": "#",
+      "arguments": {}
+    },
+    {
+      "source": "hr.events",
+      "vhost": "/",
+      "destination": "payroll.from-hr",
+      "destination_type": "queue",
+      "routing_key": "employee.*",
+      "arguments": {}
+    },
+    {
+      "source": "hr.events",
+      "vhost": "/",
+      "destination": "project_management.from-hr",
+      "destination_type": "queue",
+      "routing_key": "employee.*",
+      "arguments": {}
+    },
+    {
+      "source": "lms.events",
+      "vhost": "/",
+      "destination": "notifications.from-all",
+      "destination_type": "queue",
+      "routing_key": "#",
+      "arguments": {}
+    },
+    {
+      "source": "lms.events",
+      "vhost": "/",
+      "destination": "hr.from-lms",
+      "destination_type": "queue",
+      "routing_key": "certificate.issued",
+      "arguments": {}
+    },
+    {
+      "source": "notifications.events",
+      "vhost": "/",
+      "destination": "notifications.from-all",
+      "destination_type": "queue",
+      "routing_key": "#",
+      "arguments": {}
+    },
+    {
+      "source": "payroll.events",
+      "vhost": "/",
+      "destination": "accounting.from-payroll",
+      "destination_type": "queue",
+      "routing_key": "payroll.run.#",
+      "arguments": {}
+    },
+    {
+      "source": "payroll.events",
+      "vhost": "/",
+      "destination": "activities.from-all",
+      "destination_type": "queue",
+      "routing_key": "#.activity.#",
+      "arguments": {}
+    },
+    {
+      "source": "payroll.events",
+      "vhost": "/",
+      "destination": "gamification.from-all",
+      "destination_type": "queue",
+      "routing_key": "#.event.#",
+      "arguments": {}
+    },
+    {
+      "source": "payroll.events",
+      "vhost": "/",
+      "destination": "notifications.from-all",
+      "destination_type": "queue",
+      "routing_key": "#",
+      "arguments": {}
+    },
+    {
+      "source": "project_management.events",
+      "vhost": "/",
+      "destination": "accounting.from-project_management",
+      "destination_type": "queue",
+      "routing_key": "pm.project.budget.#",
+      "arguments": {}
+    },
+    {
+      "source": "project_management.events",
+      "vhost": "/",
+      "destination": "accounting.from-project_management",
+      "destination_type": "queue",
+      "routing_key": "pm.time_entry.#",
+      "arguments": {}
+    },
+    {
+      "source": "project_management.events",
+      "vhost": "/",
+      "destination": "activities.from-all",
+      "destination_type": "queue",
+      "routing_key": "#",
+      "arguments": {}
+    },
+    {
+      "source": "project_management.events",
+      "vhost": "/",
+      "destination": "gamification.from-all",
+      "destination_type": "queue",
+      "routing_key": "pm.task.assigned",
+      "arguments": {}
+    },
+    {
+      "source": "project_management.events",
+      "vhost": "/",
+      "destination": "gamification.from-all",
+      "destination_type": "queue",
+      "routing_key": "pm.task.completed",
+      "arguments": {}
+    },
+    {
+      "source": "project_management.events",
+      "vhost": "/",
+      "destination": "notifications.from-all",
+      "destination_type": "queue",
+      "routing_key": "#",
+      "arguments": {}
+    },
+    {
+      "source": "project_management.events",
+      "vhost": "/",
+      "destination": "notifications.from-project_management",
+      "destination_type": "queue",
+      "routing_key": "#",
+      "arguments": {}
+    },
+    {
+      "source": "sales_orders.events",
+      "vhost": "/",
+      "destination": "crm.from-sales_orders",
+      "destination_type": "queue",
+      "routing_key": "sales_orders.order.#",
+      "arguments": {}
+    },
+    {
+      "source": "sales_orders.events",
+      "vhost": "/",
+      "destination": "inventory.from-sales_orders",
+      "destination_type": "queue",
+      "routing_key": "sales_orders.order.#",
+      "arguments": {}
+    },
+    {
+      "source": "social.events",
+      "vhost": "/",
+      "destination": "notifications.from-all",
+      "destination_type": "queue",
+      "routing_key": "#",
+      "arguments": {}
+    },
+    {
+      "source": "social.events",
+      "vhost": "/",
+      "destination": "notifications.from-social",
+      "destination_type": "queue",
+      "routing_key": "#",
+      "arguments": {}
+    },
+    {
+      "source": "campaigns.events",
+      "vhost": "/",
+      "destination": "notifications.from-all",
+      "destination_type": "queue",
+      "routing_key": "#",
+      "arguments": {}
+    },
+    {
+      "source": "helpdesk.events",
+      "vhost": "/",
+      "destination": "notifications.from-all",
+      "destination_type": "queue",
+      "routing_key": "#",
+      "arguments": {}
+    },
+    {
+      "source": "accounting.events",
+      "vhost": "/",
+      "destination": "project_management.from-accounting",
+      "destination_type": "queue",
+      "routing_key": "accounting.analytic.posted",
+      "arguments": {}
+    },
+    {
+      "source": "hr.events",
+      "vhost": "/",
+      "destination": "project_management.from-hr",
+      "destination_type": "queue",
+      "routing_key": "hr.employee.terminated",
+      "arguments": {}
+    },
+    {
+      "source": "hr.events",
+      "vhost": "/",
+      "destination": "project_management.from-hr",
+      "destination_type": "queue",
+      "routing_key": "employee.offboarded",
+      "arguments": {}
+    },
+    {
+      "source": "hr.events",
+      "vhost": "/",
+      "destination": "project_management.from-hr",
+      "destination_type": "queue",
+      "routing_key": "employee.terminated",
+      "arguments": {}
+    },
+    {
+      "source": "crm.events",
+      "vhost": "/",
+      "destination": "project_management.from-crm",
+      "destination_type": "queue",
+      "routing_key": "crm.opp.close_won",
+      "arguments": {}
+    },
+    {
+      "source": "project_management.events",
+      "vhost": "/",
+      "destination": "attendance.from-pm",
+      "destination_type": "queue",
+      "routing_key": "pm.timer.stopped",
+      "arguments": {}
+    },
+    {
+      "source": "project_management.events",
+      "vhost": "/",
+      "destination": "attendance.from-pm",
+      "destination_type": "queue",
+      "routing_key": "pm.time_entry.created",
+      "arguments": {}
+    },
+    {
+      "source": "project_management.events",
+      "vhost": "/",
+      "destination": "attendance.from-pm",
+      "destination_type": "queue",
+      "routing_key": "pm.time_entry.submitted",
+      "arguments": {}
+    },
+    {
+      "source": "project_management.events",
+      "vhost": "/",
+      "destination": "attendance.from-pm",
+      "destination_type": "queue",
+      "routing_key": "pm.time_entry.approved",
+      "arguments": {}
+    },
+    {
+      "source": "project_management.events",
+      "vhost": "/",
+      "destination": "attendance.from-pm",
+      "destination_type": "queue",
+      "routing_key": "pm.time_entry.rejected",
+      "arguments": {}
+    },
+    {
+      "source": "attendance.events",
+      "vhost": "/",
+      "destination": "payroll.from-attendance",
+      "destination_type": "queue",
+      "routing_key": "attendance.timesheet.approved",
+      "arguments": {}
+    },
+    {
+      "source": "activities.events",
+      "vhost": "/",
+      "destination": "notifications.from-all",
+      "destination_type": "queue",
+      "routing_key": "activity.#",
+      "arguments": {}
+    },
+    {
+      "source": "meet.events",
+      "vhost": "/",
+      "destination": "notifications.from-all",
+      "destination_type": "queue",
+      "routing_key": "meet.#",
+      "arguments": {}
+    },
+    {
+      "source": "meet.events",
+      "vhost": "/",
+      "destination": "activities.from-all",
+      "destination_type": "queue",
+      "routing_key": "meet.activity.requested",
+      "arguments": {}
+    },
+    {
+      "source": "meet.events",
+      "vhost": "/",
+      "destination": "activities.from-meet",
+      "destination_type": "queue",
+      "routing_key": "meet.chat.message",
+      "arguments": {}
+    },
+    {
+      "source": "meet.events",
+      "vhost": "/",
+      "destination": "activities.from-meet",
+      "destination_type": "queue",
+      "routing_key": "meet.chat.deleted",
+      "arguments": {}
+    },
+    {
+      "source": "meet.events",
+      "vhost": "/",
+      "destination": "activities.from-meet",
+      "destination_type": "queue",
+      "routing_key": "meet.poll.closed",
+      "arguments": {}
+    },
+    {
+      "source": "correspondence.events",
+      "vhost": "/",
+      "destination": "notifications.from-all",
+      "destination_type": "queue",
+      "routing_key": "correspondence.#",
+      "arguments": {}
+    },
+    {
+      "source": "fleet.events",
+      "vhost": "/",
+      "destination": "notifications.from-all",
+      "destination_type": "queue",
+      "routing_key": "fleet.#",
+      "arguments": {}
+    },
+    {
+      "source": "chat.events",
+      "vhost": "/",
+      "destination": "notifications.from-all",
+      "destination_type": "queue",
+      "routing_key": "chat.notify.#",
+      "arguments": {}
+    },
+    {
+      "source": "ecommerce.events",
+      "vhost": "/",
+      "destination": "notifications.from-all",
+      "destination_type": "queue",
+      "routing_key": "ecommerce.order.#",
+      "arguments": {}
+    },
+    {
+      "source": "ecommerce.events",
+      "vhost": "/",
+      "destination": "notifications.from-all",
+      "destination_type": "queue",
+      "routing_key": "ecommerce.cart.#",
+      "arguments": {}
+    },
+    {
+      "source": "subscriptions.events",
+      "vhost": "/",
+      "destination": "notifications.from-all",
+      "destination_type": "queue",
+      "routing_key": "subscriptions.subscription.#",
+      "arguments": {}
+    },
+    {
+      "source": "subscriptions.events",
+      "vhost": "/",
+      "destination": "notifications.from-all",
+      "destination_type": "queue",
+      "routing_key": "subscriptions.license.#",
+      "arguments": {}
+    },
+    {
+      "source": "parties.events",
+      "vhost": "/",
+      "destination": "subscriptions.from-modules",
+      "destination_type": "queue",
+      "routing_key": "parties.party.#",
+      "arguments": {}
+    },
+    {
+      "source": "ecommerce.events",
+      "vhost": "/",
+      "destination": "subscriptions.from-modules",
+      "destination_type": "queue",
+      "routing_key": "ecommerce.product.#",
+      "arguments": {}
+    },
+    {
+      "source": "accounting.events",
+      "vhost": "/",
+      "destination": "subscriptions.from-modules",
+      "destination_type": "queue",
+      "routing_key": "accounting.tax.#",
+      "arguments": {}
+    },
+    {
+      "source": "accounting.events",
+      "vhost": "/",
+      "destination": "subscriptions.from-modules",
+      "destination_type": "queue",
+      "routing_key": "accounting.ar_invoice.created",
+      "arguments": {}
+    },
+    {
+      "source": "accounting.events",
+      "vhost": "/",
+      "destination": "subscriptions.from-modules",
+      "destination_type": "queue",
+      "routing_key": "accounting.ar_invoice.paid",
+      "arguments": {}
+    },
+    {
+      "source": "accounting.events",
+      "vhost": "/",
+      "destination": "subscriptions.from-modules",
+      "destination_type": "queue",
+      "routing_key": "accounting.ar_invoice.voided",
+      "arguments": {}
+    },
+    {
+      "source": "accounting.events",
+      "vhost": "/",
+      "destination": "subscriptions.from-modules",
+      "destination_type": "queue",
+      "routing_key": "accounting.ar_payment.recorded",
+      "arguments": {}
+    },
+    {
+      "source": "crm.events",
+      "vhost": "/",
+      "destination": "subscriptions.from-modules",
+      "destination_type": "queue",
+      "routing_key": "crm.quote.accepted",
+      "arguments": {}
+    },
+    {
+      "source": "rental.events",
+      "vhost": "/",
+      "destination": "notifications.from-all",
+      "destination_type": "queue",
+      "routing_key": "rental.booking.#",
+      "arguments": {}
+    },
+    {
+      "source": "rental.events",
+      "vhost": "/",
+      "destination": "notifications.from-all",
+      "destination_type": "queue",
+      "routing_key": "rental.unit.#",
+      "arguments": {}
+    },
+    {
+      "source": "pos.events",
+      "vhost": "/",
+      "destination": "notifications.from-all",
+      "destination_type": "queue",
+      "routing_key": "pos.session.#",
+      "arguments": {}
+    },
+    {
+      "source": "pos.events",
+      "vhost": "/",
+      "destination": "notifications.from-all",
+      "destination_type": "queue",
+      "routing_key": "pos.order.refunded",
+      "arguments": {}
+    },
+    {
+      "source": "ecommerce.events",
+      "vhost": "/",
+      "destination": "pos.from-modules",
+      "destination_type": "queue",
+      "routing_key": "ecommerce.product.#",
+      "arguments": {}
+    },
+    {
+      "source": "ecommerce.events",
+      "vhost": "/",
+      "destination": "pos.from-modules",
+      "destination_type": "queue",
+      "routing_key": "ecommerce.variant.#",
+      "arguments": {}
+    },
+    {
+      "source": "ecommerce.events",
+      "vhost": "/",
+      "destination": "pos.from-modules",
+      "destination_type": "queue",
+      "routing_key": "ecommerce.pricelist.updated",
+      "arguments": {}
+    },
+    {
+      "source": "parties.events",
+      "vhost": "/",
+      "destination": "pos.from-modules",
+      "destination_type": "queue",
+      "routing_key": "parties.party.#",
+      "arguments": {}
+    },
+    {
+      "source": "accounting.events",
+      "vhost": "/",
+      "destination": "pos.from-modules",
+      "destination_type": "queue",
+      "routing_key": "accounting.tax.#",
+      "arguments": {}
+    },
+    {
+      "source": "pos.events",
+      "vhost": "/",
+      "destination": "accounting.from-pos",
+      "destination_type": "queue",
+      "routing_key": "pos.session.closed",
+      "arguments": {}
+    },
+    {
+      "source": "pos.events",
+      "vhost": "/",
+      "destination": "accounting.from-pos",
+      "destination_type": "queue",
+      "routing_key": "pos.order.paid",
+      "arguments": {}
+    },
+    {
+      "source": "pos.events",
+      "vhost": "/",
+      "destination": "accounting.from-pos",
+      "destination_type": "queue",
+      "routing_key": "pos.order.refunded",
+      "arguments": {}
+    },
+    {
+      "source": "pos.events",
+      "vhost": "/",
+      "destination": "inventory.from-pos",
+      "destination_type": "queue",
+      "routing_key": "pos.order.paid",
+      "arguments": {}
+    },
+    {
+      "source": "pos.events",
+      "vhost": "/",
+      "destination": "inventory.from-pos",
+      "destination_type": "queue",
+      "routing_key": "pos.order.refunded",
+      "arguments": {}
+    },
+    {
+      "source": "parties.events",
+      "vhost": "/",
+      "destination": "rental.from-modules",
+      "destination_type": "queue",
+      "routing_key": "parties.party.#",
+      "arguments": {}
+    },
+    {
+      "source": "ecommerce.events",
+      "vhost": "/",
+      "destination": "rental.from-modules",
+      "destination_type": "queue",
+      "routing_key": "ecommerce.product.#",
+      "arguments": {}
+    },
+    {
+      "source": "accounting.events",
+      "vhost": "/",
+      "destination": "rental.from-modules",
+      "destination_type": "queue",
+      "routing_key": "accounting.tax.#",
+      "arguments": {}
+    },
+    {
+      "source": "accounting.events",
+      "vhost": "/",
+      "destination": "rental.from-modules",
+      "destination_type": "queue",
+      "routing_key": "accounting.ar_invoice.created",
+      "arguments": {}
+    },
+    {
+      "source": "accounting.events",
+      "vhost": "/",
+      "destination": "rental.from-modules",
+      "destination_type": "queue",
+      "routing_key": "accounting.ar_invoice.paid",
+      "arguments": {}
+    },
+    {
+      "source": "accounting.events",
+      "vhost": "/",
+      "destination": "rental.from-modules",
+      "destination_type": "queue",
+      "routing_key": "accounting.ar_invoice.voided",
+      "arguments": {}
+    },
+    {
+      "source": "accounting.events",
+      "vhost": "/",
+      "destination": "rental.from-modules",
+      "destination_type": "queue",
+      "routing_key": "accounting.ar_payment.recorded",
+      "arguments": {}
+    },
+    {
+      "source": "crm.events",
+      "vhost": "/",
+      "destination": "rental.from-modules",
+      "destination_type": "queue",
+      "routing_key": "crm.quote.accepted",
+      "arguments": {}
+    },
+    {
+      "source": "parties.events",
+      "vhost": "/",
+      "destination": "ecommerce.from-modules",
+      "destination_type": "queue",
+      "routing_key": "parties.party.#",
+      "arguments": {}
+    },
+    {
+      "source": "accounting.events",
+      "vhost": "/",
+      "destination": "ecommerce.from-modules",
+      "destination_type": "queue",
+      "routing_key": "accounting.tax.#",
+      "arguments": {}
+    },
+    {
+      "source": "inventory.events",
+      "vhost": "/",
+      "destination": "ecommerce.from-modules",
+      "destination_type": "queue",
+      "routing_key": "inventory.item.linked",
+      "arguments": {}
+    },
+    {
+      "source": "ecommerce.events",
+      "vhost": "/",
+      "destination": "crm.from-ecommerce",
+      "destination_type": "queue",
+      "routing_key": "ecommerce.product.#",
+      "arguments": {}
+    },
+    {
+      "source": "ecommerce.events",
+      "vhost": "/",
+      "destination": "crm.from-ecommerce",
+      "destination_type": "queue",
+      "routing_key": "ecommerce.pricelist.#",
+      "arguments": {}
+    },
+    {
+      "source": "ecommerce.events",
+      "vhost": "/",
+      "destination": "inventory.from-ecommerce",
+      "destination_type": "queue",
+      "routing_key": "ecommerce.product.#",
+      "arguments": {}
+    },
+    {
+      "source": "ecommerce.events",
+      "vhost": "/",
+      "destination": "inventory.from-ecommerce",
+      "destination_type": "queue",
+      "routing_key": "ecommerce.variant.#",
+      "arguments": {}
+    },
+    {
+      "source": "ecommerce.events",
+      "vhost": "/",
+      "destination": "sales_orders.from-ecommerce",
+      "destination_type": "queue",
+      "routing_key": "ecommerce.order.paid",
+      "arguments": {}
+    },
+    {
+      "source": "ecommerce.events",
+      "vhost": "/",
+      "destination": "sales_orders.from-ecommerce",
+      "destination_type": "queue",
+      "routing_key": "ecommerce.order.cancelled",
+      "arguments": {}
+    },
+    {
+      "source": "ecommerce.events",
+      "vhost": "/",
+      "destination": "accounting.from-ecommerce",
+      "destination_type": "queue",
+      "routing_key": "ecommerce.order.paid",
+      "arguments": {}
+    },
+    {
+      "source": "ecommerce.events",
+      "vhost": "/",
+      "destination": "accounting.from-ecommerce",
+      "destination_type": "queue",
+      "routing_key": "ecommerce.order.refunded",
+      "arguments": {}
+    },
+    {
+      "source": "ecommerce.events",
+      "vhost": "/",
+      "destination": "inventory.from-ecommerce-orders",
+      "destination_type": "queue",
+      "routing_key": "ecommerce.order.paid",
+      "arguments": {}
+    },
+    {
+      "source": "ecommerce.events",
+      "vhost": "/",
+      "destination": "inventory.from-ecommerce-orders",
+      "destination_type": "queue",
+      "routing_key": "ecommerce.order.cancelled",
+      "arguments": {}
+    },
+    {
+      "source": "ecommerce.events",
+      "vhost": "/",
+      "destination": "rental.from-modules",
+      "destination_type": "queue",
+      "routing_key": "ecommerce.order.paid",
+      "arguments": {}
+    },
+    {
+      "source": "ecommerce.events",
+      "vhost": "/",
+      "destination": "subscriptions.from-modules",
+      "destination_type": "queue",
+      "routing_key": "ecommerce.order.paid",
+      "arguments": {}
+    },
+    {
+      "source": "sales_orders.events",
+      "vhost": "/",
+      "destination": "ecommerce.from-modules",
+      "destination_type": "queue",
+      "routing_key": "sales_orders.order.#",
+      "arguments": {}
+    },
+    {
+      "source": "sales_orders.events",
+      "vhost": "/",
+      "destination": "ecommerce.from-modules",
+      "destination_type": "queue",
+      "routing_key": "sales_orders.delivery.#",
+      "arguments": {}
+    },
+    {
+      "source": "subscriptions.events",
+      "vhost": "/",
+      "destination": "accounting.from-subscriptions",
+      "destination_type": "queue",
+      "routing_key": "subscriptions.invoice.#",
+      "arguments": {}
+    },
+    {
+      "source": "rental.events",
+      "vhost": "/",
+      "destination": "accounting.from-rental",
+      "destination_type": "queue",
+      "routing_key": "rental.invoice.#",
+      "arguments": {}
+    },
+    {
+      "source": "rental.events",
+      "vhost": "/",
+      "destination": "inventory.from-rental",
+      "destination_type": "queue",
+      "routing_key": "rental.booking.picked_up",
+      "arguments": {}
+    },
+    {
+      "source": "rental.events",
+      "vhost": "/",
+      "destination": "inventory.from-rental",
+      "destination_type": "queue",
+      "routing_key": "rental.booking.returned",
+      "arguments": {}
+    },
+    {
+      "source": "activities.dlx",
+      "vhost": "/",
+      "destination": "activities.from-all.dlq",
+      "destination_type": "queue",
+      "routing_key": "#",
+      "arguments": {}
+    },
+    {
+      "source": "attendance.events",
+      "vhost": "/",
+      "destination": "payroll.from-attendance",
+      "destination_type": "queue",
+      "routing_key": "attendance.leave.approved",
+      "arguments": {}
+    },
+    {
+      "source": "attendance.events",
+      "vhost": "/",
+      "destination": "payroll.from-attendance",
+      "destination_type": "queue",
+      "routing_key": "attendance.leave.rejected",
+      "arguments": {}
+    },
+    {
+      "source": "attendance.events",
+      "vhost": "/",
+      "destination": "payroll.from-attendance",
+      "destination_type": "queue",
+      "routing_key": "attendance.leave.cancelled",
+      "arguments": {}
+    },
+    {
+      "source": "hr.events",
+      "vhost": "/",
+      "destination": "payroll.from-hr",
+      "destination_type": "queue",
+      "routing_key": "hr.compensation.changed",
+      "arguments": {}
+    },
+    {
+      "source": "accounting.events",
+      "vhost": "/",
+      "destination": "notifications.from-all",
+      "destination_type": "queue",
+      "routing_key": "#",
+      "arguments": {}
+    },
+    {
+      "source": "hr.events",
+      "vhost": "/",
+      "destination": "payroll.from-hr",
+      "destination_type": "queue",
+      "routing_key": "hr.benefit.enrolled",
+      "arguments": {}
+    },
+    {
+      "source": "accounting.events",
+      "vhost": "/",
+      "destination": "crm.from-accounting",
+      "destination_type": "queue",
+      "routing_key": "accounting.ar_invoice.#",
+      "arguments": {}
+    },
+    {
+      "source": "accounting.events",
+      "vhost": "/",
+      "destination": "crm.from-accounting",
+      "destination_type": "queue",
+      "routing_key": "accounting.ar_payment.#",
+      "arguments": {}
+    },
+    {
+      "source": "sales_orders.events",
+      "vhost": "/",
+      "destination": "accounting.from-sales_orders",
+      "destination_type": "queue",
+      "routing_key": "sales_orders.order.delivered",
+      "arguments": {}
+    },
+    {
+      "source": "sales_orders.events",
+      "vhost": "/",
+      "destination": "accounting.from-sales_orders",
+      "destination_type": "queue",
+      "routing_key": "sales_orders.return.completed",
+      "arguments": {}
+    },
+    {
+      "source": "sales_orders.events",
+      "vhost": "/",
+      "destination": "inventory.from-sales_orders",
+      "destination_type": "queue",
+      "routing_key": "sales_orders.delivery.#",
+      "arguments": {}
+    },
+    {
+      "source": "sales_orders.events",
+      "vhost": "/",
+      "destination": "notifications.from-all",
+      "destination_type": "queue",
+      "routing_key": "#",
+      "arguments": {}
+    },
+    {
+      "source": "inventory.events",
+      "vhost": "/",
+      "destination": "notifications.from-all",
+      "destination_type": "queue",
+      "routing_key": "#",
+      "arguments": {}
+    },
+    {
+      "source": "assets.events",
+      "vhost": "/",
+      "destination": "notifications.from-all",
+      "destination_type": "queue",
+      "routing_key": "#",
+      "arguments": {}
+    },
+    {
+      "source": "crm.events",
+      "vhost": "/",
+      "destination": "parties.from-modules",
+      "destination_type": "queue",
+      "routing_key": "crm.account.#",
+      "arguments": {}
+    },
+    {
+      "source": "accounting.events",
+      "vhost": "/",
+      "destination": "parties.from-modules",
+      "destination_type": "queue",
+      "routing_key": "accounting.partner.#",
+      "arguments": {}
+    },
+    {
+      "source": "fleet.events",
+      "vhost": "/",
+      "destination": "parties.from-modules",
+      "destination_type": "queue",
+      "routing_key": "fleet.party_cache.#",
+      "arguments": {}
+    },
+    {
+      "source": "parties.events",
+      "vhost": "/",
+      "destination": "crm.from-parties",
+      "destination_type": "queue",
+      "routing_key": "parties.party.#",
+      "arguments": {}
+    },
+    {
+      "source": "parties.events",
+      "vhost": "/",
+      "destination": "accounting.from-parties",
+      "destination_type": "queue",
+      "routing_key": "parties.party.#",
+      "arguments": {}
+    },
+    {
+      "source": "parties.events",
+      "vhost": "/",
+      "destination": "sales_orders.from-parties",
+      "destination_type": "queue",
+      "routing_key": "parties.party.#",
+      "arguments": {}
+    },
+    {
+      "source": "parties.events",
+      "vhost": "/",
+      "destination": "correspondence.from-parties",
+      "destination_type": "queue",
+      "routing_key": "parties.party.#",
+      "arguments": {}
+    },
+    {
+      "source": "hr.events",
+      "vhost": "/",
+      "destination": "fleet.from-modules",
+      "destination_type": "queue",
+      "routing_key": "employee.#",
+      "arguments": {}
+    },
+    {
+      "source": "parties.events",
+      "vhost": "/",
+      "destination": "fleet.from-modules",
+      "destination_type": "queue",
+      "routing_key": "parties.party.#",
+      "arguments": {}
+    },
+    {
+      "source": "accounting.events",
+      "vhost": "/",
+      "destination": "fleet.from-modules",
+      "destination_type": "queue",
+      "routing_key": "accounting.fixed_asset.#",
+      "arguments": {}
+    },
+    {
+      "source": "hr.events",
+      "vhost": "/",
+      "destination": "chat.from-modules",
+      "destination_type": "queue",
+      "routing_key": "employee.offboarded",
+      "arguments": {}
+    },
+    {
+      "source": "attendance.events",
+      "vhost": "/",
+      "destination": "chat.from-modules",
+      "destination_type": "queue",
+      "routing_key": "attendance.leave.approved",
+      "arguments": {}
+    },
+    {
+      "source": "attendance.events",
+      "vhost": "/",
+      "destination": "chat.from-modules",
+      "destination_type": "queue",
+      "routing_key": "attendance.leave.rejected",
+      "arguments": {}
+    },
+    {
+      "source": "attendance.events",
+      "vhost": "/",
+      "destination": "chat.from-modules",
+      "destination_type": "queue",
+      "routing_key": "attendance.leave.cancelled",
+      "arguments": {}
+    },
+    {
+      "source": "crm.events",
+      "vhost": "/",
+      "destination": "inventory.from-crm",
+      "destination_type": "queue",
+      "routing_key": "crm.product.#",
+      "arguments": {}
+    },
+    {
+      "source": "inventory.events",
+      "vhost": "/",
+      "destination": "crm.from-inventory",
+      "destination_type": "queue",
+      "routing_key": "inventory.item.#",
+      "arguments": {}
+    },
+    {
+      "source": "accounting.events",
+      "vhost": "/",
+      "destination": "crm.from-accounting",
+      "destination_type": "queue",
+      "routing_key": "accounting.tax.#",
+      "arguments": {}
+    },
+    {
+      "source": "accounting.events",
+      "vhost": "/",
+      "destination": "sales_orders.from-accounting",
+      "destination_type": "queue",
+      "routing_key": "accounting.tax.#",
+      "arguments": {}
+    },
+    {
+      "source": "crm.events",
+      "vhost": "/",
+      "destination": "sales_orders.from-crm",
+      "destination_type": "queue",
+      "routing_key": "crm.opp.#",
+      "arguments": {}
+    },
+    {
+      "source": "sales_orders.events",
+      "vhost": "/",
+      "destination": "inventory.from-sales_orders",
+      "destination_type": "queue",
+      "routing_key": "sales_orders.return.#",
+      "arguments": {}
+    },
+    {
+      "source": "sales_orders.events",
+      "vhost": "/",
+      "destination": "accounting.from-sales_orders",
+      "destination_type": "queue",
+      "routing_key": "sales_orders.delivery.#",
+      "arguments": {}
+    },
+    {
+      "source": "accounting.events",
+      "vhost": "/",
+      "destination": "sales_orders.from-accounting",
+      "destination_type": "queue",
+      "routing_key": "accounting.ar_invoice.#",
+      "arguments": {}
+    },
+    {
+      "source": "parties.events",
+      "vhost": "/",
+      "destination": "inventory.from-parties",
+      "destination_type": "queue",
+      "routing_key": "parties.party.#",
+      "arguments": {}
+    },
+    {
+      "source": "accounting.events",
+      "vhost": "/",
+      "destination": "inventory.from-accounting",
+      "destination_type": "queue",
+      "routing_key": "accounting.ap_bill.#",
+      "arguments": {}
+    },
+    {
+      "source": "inventory.events",
+      "vhost": "/",
+      "destination": "accounting.from-inventory",
+      "destination_type": "queue",
+      "routing_key": "inventory.purchase_order.#",
+      "arguments": {}
+    },
+    {
+      "source": "inventory.events",
+      "vhost": "/",
+      "destination": "accounting.from-inventory",
+      "destination_type": "queue",
+      "routing_key": "inventory.receipt.#",
+      "arguments": {}
+    },
+    {
+      "source": "inventory.events",
+      "vhost": "/",
+      "destination": "accounting.from-inventory",
+      "destination_type": "queue",
+      "routing_key": "inventory.landed_cost.#",
+      "arguments": {}
+    },
+    {
+      "source": "inventory.events",
+      "vhost": "/",
+      "destination": "accounting.from-inventory",
+      "destination_type": "queue",
+      "routing_key": "inventory.move.#",
+      "arguments": {}
+    },
+    {
+      "source": "inventory.events",
+      "vhost": "/",
+      "destination": "accounting.from-inventory",
+      "destination_type": "queue",
+      "routing_key": "inventory.adjustment.#",
+      "arguments": {}
+    },
+    {
+      "source": "inventory.events",
+      "vhost": "/",
+      "destination": "accounting.from-inventory",
+      "destination_type": "queue",
+      "routing_key": "inventory.valuation.#",
+      "arguments": {}
+    },
+    {
+      "source": "assets.events",
+      "vhost": "/",
+      "destination": "accounting.from-assets",
+      "destination_type": "queue",
+      "routing_key": "assets.asset.#",
+      "arguments": {}
+    },
+    {
+      "source": "auth.events",
+      "vhost": "/",
+      "destination": "accounting.from-auth",
+      "destination_type": "queue",
+      "routing_key": "auth.legal_entity.updated",
+      "arguments": {}
+    },
+    {
+      "source": "auth.events",
+      "vhost": "/",
+      "destination": "accounting.from-auth",
+      "destination_type": "queue",
+      "routing_key": "auth.branch.statutory_updated",
+      "arguments": {}
+    },
+    {
+      "source": "lms.events",
+      "vhost": "/",
+      "destination": "accounting.from-lms",
+      "destination_type": "queue",
+      "routing_key": "lms.payment.captured",
+      "arguments": {}
+    },
+    {
+      "source": "lms.events",
+      "vhost": "/",
+      "destination": "accounting.from-lms",
+      "destination_type": "queue",
+      "routing_key": "lms.payment.refunded",
+      "arguments": {}
+    },
+    {
+      "source": "sales_orders.events",
+      "vhost": "/",
+      "destination": "accounting.from-sales_orders",
+      "destination_type": "queue",
+      "routing_key": "sales_orders.order.#",
+      "arguments": {}
+    },
+    {
+      "source": "sales_orders.events",
+      "vhost": "/",
+      "destination": "accounting.from-sales_orders",
+      "destination_type": "queue",
+      "routing_key": "sales_orders.return.#",
+      "arguments": {}
+    },
+    {
+      "source": "accounting.events",
+      "vhost": "/",
+      "destination": "assets.from-accounting",
+      "destination_type": "queue",
+      "routing_key": "accounting.fixed_asset.#",
+      "arguments": {}
+    },
+    {
+      "source": "hr.events",
+      "vhost": "/",
+      "destination": "assets.from-hr",
+      "destination_type": "queue",
+      "routing_key": "employee.offboarding_initiated",
+      "arguments": {}
+    },
+    {
+      "source": "assets.events",
+      "vhost": "/",
+      "destination": "hr.from-assets",
+      "destination_type": "queue",
+      "routing_key": "assets.offboarding.returns",
+      "arguments": {}
+    },
+    {
+      "source": "assets.events",
+      "vhost": "/",
+      "destination": "hr.from-assets",
+      "destination_type": "queue",
+      "routing_key": "assets.asset.checked_in",
+      "arguments": {}
+    },
+    {
+      "source": "assets.events",
+      "vhost": "/",
+      "destination": "assets.from-assets",
+      "destination_type": "queue",
+      "routing_key": "assets.asset.#",
+      "arguments": {}
+    },
+    {
+      "source": "assets.events",
+      "vhost": "/",
+      "destination": "assets.from-assets",
+      "destination_type": "queue",
+      "routing_key": "assets.work_order.#",
+      "arguments": {}
+    },
+    {
+      "source": "meet.events",
+      "vhost": "/",
+      "destination": "project_management.from-meet",
+      "destination_type": "queue",
+      "routing_key": "meet.task.requested",
+      "arguments": {}
+    }
+  ],
+  "policies": [
+    {
+      "vhost": "/",
+      "name": "tarleaks-queue-limits",
+      "pattern": ".*",
+      "apply-to": "queues",
+      "priority": 0,
+      "definition": {
+        "message-ttl": 2592000000,
+        "max-length": 200000,
+        "overflow": "drop-head"
+      }
+    }
+  ]
+}

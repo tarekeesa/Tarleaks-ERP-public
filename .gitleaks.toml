@@ -1,0 +1,21 @@
+# gitleaks (secret scanner) settings for this repository: the default rules,
+# plus the known false positives, each allowed by its exact line only:
+# - docker-compose.yml passes the RabbitMQ user and password to curl from the
+#   container's own environment ($$RABBITMQ_USER, $$RABBITMQ_PASSWORD); any
+#   other `curl -u user:password` is still found.
+# - docker-compose.yml builds auth's PEM signing key from JWT_SIGNING_KEY_DER
+#   in .env (the BEGIN/END lines around a variable); a real private key in any
+#   file is still found.
+# No credential is written in this repository.
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "curl reads the RabbitMQ credentials from environment variables"
+regexTarget = "line"
+regexes = ['''-u "\$\$RABBITMQ_USER:\$\$RABBITMQ_PASSWORD"''']
+
+[[allowlists]]
+description = "compose wraps the signing key from .env in PEM lines"
+regexTarget = "line"
+regexes = ['''^\s*JWT_SIGNING_KEY: "\$\{JWT_SIGNING_KEY_DER:\+-----BEGIN PRIVATE KEY-----\}\\n\$\{JWT_SIGNING_KEY_DER:-\}\\n\$\{JWT_SIGNING_KEY_DER:\+-----END PRIVATE KEY-----\}\\n"$''']

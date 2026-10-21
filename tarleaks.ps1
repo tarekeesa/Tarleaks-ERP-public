@@ -20,6 +20,8 @@
   .\tarleaks.ps1 network local           # or office: who may open the ERP
   .\tarleaks.ps1 load-bundle D:\tarleaks-1.1.0-linux-amd64
   .\tarleaks.ps1 uninstall               # -Purge: delete the data too
+  .\tarleaks.ps1 doctor                  # check the installation, explain problems
+  .\tarleaks.ps1 doctor -Bundle          # the same, plus logs and versions, in one file for support
 #>
 param(
   [Parameter(Position = 0)] [string] $Command = 'help',
@@ -33,7 +35,8 @@ param(
   [switch] $Check,
   [string] $Company = '',
   [switch] $ResetTwoFactor,
-  [switch] $KeepSettings
+  [switch] $KeepSettings,
+  [switch] $Bundle
 )
 $ErrorActionPreference = 'Stop'
 Set-Location -Path $PSScriptRoot
@@ -142,6 +145,7 @@ function Convert-LegacyKeys {
 function Port { $p = Get-EnvValue 'HTTP_PORT'; if ($p) { $p } else { '80' } }
 . (Join-Path $PSScriptRoot 'scripts/lib-apps.ps1')
 . (Join-Path $PSScriptRoot 'scripts/lib-keys.ps1')
+. (Join-Path $PSScriptRoot 'scripts/lib-scrub.ps1')
 $script:AppsVersion = Get-EnvValue 'TARLEAKS_VERSION'
 # The migrate image was renamed with the rebrand: nexus-migrate up to 1.1.x,
 # tarleaks-migrate from 1.2.0. docker-compose.yml reads TARLEAKS_MIGRATE_IMAGE;
@@ -447,6 +451,349 @@ function Assert-Platform([string] $ImagesTxt) {
   $arch = (docker info --format '{{.Architecture}}').Trim()
   $mine = switch ($arch) { { $_ -in 'x86_64', 'amd64' } { 'linux/amd64' } { $_ -in 'aarch64', 'arm64' } { 'linux/arm64' } default { $arch } }
   if ($want -ne $mine) { Die "This bundle is for $want; this computer runs $mine. Get the $mine bundle." }
+}
+
+# What is wrong with the profile and addresses in .env, as lines "ERROR ..." or
+# "WARN ..." (the Windows twin of env_problems in scripts/lib-env.sh, for what
+# Windows offers: the local profile, or production behind your own HTTPS
+# reverse proxy; Let's Encrypt, Cloudflare and offline modes are Linux and
+# macOS features).
+function Get-UrlHost([string] $Url) {
+  if ($Url -notmatch '^[A-Za-z]+://') { return '' }
+  $h = ($Url -replace '^[A-Za-z]+://', '') -replace '/.*$', ''
+  if ($h -match '^\[([^\]]*)\]') { $h = $Matches[1] } else { $h = $h -replace ':\d+$', '' }
+  return $h.ToLowerInvariant()
+}
+function Get-UrlScheme([string] $Url) { if ($Url -match '^([A-Za-z]+)://') { return $Matches[1].ToLowerInvariant() } else { return '' } }
+function Test-LoopbackHost([string] $H) { return ($H -eq 'localhost' -or $H -like '*.localhost' -or $H -like '127.*' -or $H -eq '::1') }
+function Test-IpHost([string] $H) { return ($H -match '^(\d{1,3}\.){3}\d{1,3}$' -or $H.Contains(':')) }
+function Get-EnvProblem {
+  $profileEnv = Get-EnvValue 'TARLEAKS_PROFILE_ENV'; if (-not $profileEnv) { $profileEnv = 'local' }
+  $tls = Get-EnvValue 'TARLEAKS_TLS'
+  $hostName = Get-EnvValue 'TARLEAKS_HOST'; $url = Get-EnvValue 'TARLEAKS_URL'
+  $bind = Get-EnvValue 'HTTP_BIND'; if (-not $bind) { $bind = '0.0.0.0' }
+  $scheme = Get-UrlScheme $url; $uhost = Get-UrlHost $url
+  if ($profileEnv -notin 'local', 'production') { "ERROR TARLEAKS_PROFILE_ENV is '$profileEnv'. Use local (this computer or the office network) or production (a real domain behind your HTTPS reverse proxy)." }
+  if ($scheme -notin 'http', 'https') { "ERROR TARLEAKS_URL is '$url'. Write the full address people type, for example http://192.168.1.20 or https://erp.example.com." }
+  if ($uhost -and $uhost -ne "$hostName".ToLowerInvariant()) { "ERROR TARLEAKS_URL ($url) and TARLEAKS_HOST ($hostName) name different machines. Set both to the same name: .\install.ps1 -HostName <name>." }
+  if ($tls -in 'letsencrypt', 'cloudflare') { "ERROR TARLEAKS_TLS is '$tls', which Windows does not serve itself. On Windows, production runs behind your own HTTPS reverse proxy: .\install.ps1 -ProfileEnv production (it sets TARLEAKS_TLS=proxy). docs/https.md" }
+  elseif ($tls -and $tls -ne 'proxy') { "ERROR TARLEAKS_TLS is '$tls'. On Windows use proxy (your HTTPS reverse proxy holds the certificate) or leave it empty. docs/https.md" }
+  if ($profileEnv -eq 'production') {
+    if ($scheme -ne 'https') { "ERROR The production profile is reached over HTTPS, but TARLEAKS_URL is '$url'. Use https://<your domain>, or the local profile: .\install.ps1 -ProfileEnv local." }
+    if (-not $hostName -or (Test-LoopbackHost $hostName) -or (Test-IpHost $hostName)) { "ERROR The production profile needs a domain name (erp.example.com), not '$(if ($hostName) { $hostName } else { 'nothing' })': certificates are issued for names. docs/https.md" }
+    if (-not $tls) { "ERROR The production profile on Windows runs behind your own HTTPS reverse proxy, but TARLEAKS_TLS is empty. Run .\install.ps1 -ProfileEnv production (it sets TARLEAKS_TLS=proxy). docs/https.md" }
+    if ($tls -eq 'proxy' -and $bind -ne '127.0.0.1') { "WARN TARLEAKS_TLS=proxy but the gateway also answers plain http on the network (HTTP_BIND=$bind). If the proxy runs on this computer: .\tarleaks.ps1 network local." }
+  } else {
+    if ($scheme -eq 'https' -and $tls -ne 'proxy') { "WARN TARLEAKS_URL is https:// but nothing here serves HTTPS. Fine when a reverse proxy in front holds the certificate (then set TARLEAKS_TLS=proxy); otherwise use http://." }
+    if ($bind -eq '127.0.0.1' -and $hostName -and -not (Test-LoopbackHost $hostName)) { "WARN People open the ERP at $hostName, but only this computer may connect (HTTP_BIND=127.0.0.1). Fine behind a reverse proxy on this computer; otherwise .\tarleaks.ps1 network office." }
+  }
+  # Addresses handed to browsers must be the one people use.
+  foreach ($k in 'TARLEAKS_STORAGE_PRESIGN_ENDPOINT', 'ONLYOFFICE_PUBLIC_URL', 'DRAWIO_URL') {
+    $v = Get-EnvValue $k; if (-not $v) { continue }
+    $h = Get-UrlHost $v; $sc = Get-UrlScheme $v
+    if ((Test-LoopbackHost $h) -and -not (Test-LoopbackHost $uhost)) { "ERROR $k is $v, but people open the ERP at ${url}: their browsers would look on their own computer. Leave $k empty (it follows TARLEAKS_URL)." }
+    if ($scheme -eq 'https' -and $sc -eq 'http') { "ERROR $k is $v (http://) inside an https:// ERP: browsers block it. Use https:// or leave it empty." }
+  }
+}
+
+# .\tarleaks.ps1 doctor: checks everything and never stops half-way; returns
+# the number of problems (each one printed with what to do). The Windows twin
+# of ./tarleaks doctor, for the checks that mean the same on Windows.
+function Invoke-Doctor {
+  $script:problems = 0
+  function Flag($m) { Write-Host "  [x]  $m" -ForegroundColor Red; $script:problems++ }
+  $old = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+  # Windows PowerShell 5.1 does not offer TLS 1.2 by default; tarleaks.com needs it.
+  [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+  $proxy = Get-EnvValue 'HTTPS_PROXY'
+  $web = @{ UseBasicParsing = $true }; if ($proxy) { $web.Proxy = $proxy }
+  # A new installation (setup screen not used yet) has no workspace, so its
+  # one-shot database update has nothing to do: not a problem.
+  $pending = $false
+  try { $pending = [bool](Invoke-RestMethod -TimeoutSec 10 -Uri "$(Probe)/api/auth/installation").setup_required } catch { }
+  try {
+    Write-Host 'Docker'
+    docker info *> $null
+    if ($LASTEXITCODE -ne 0) { Flag 'Docker is not running. Start Docker Desktop, then run this again.'; return $script:problems }
+    Ok 'Docker is running'
+
+    Write-Host 'Profile and addresses'
+    $envOut = @(Get-EnvProblem)
+    $profileEnv = Get-EnvValue 'TARLEAKS_PROFILE_ENV'; if (-not $profileEnv) { $profileEnv = 'local' }
+    if (-not ($envOut | Where-Object { $_ -like 'ERROR *' })) {
+      Ok "Profile $profileEnv$(if ((Get-EnvValue 'TARLEAKS_TLS') -eq 'proxy') { ', HTTPS by your reverse proxy' }), people open $(Get-EnvValue 'TARLEAKS_URL')"
+    }
+    foreach ($line in $envOut) {
+      if ($line -like 'ERROR *') { Flag $line.Substring(6) } elseif ($line -like 'WARN *') { Warn $line.Substring(5) }
+    }
+
+    Write-Host 'Containers'
+    $oneShot = @('rabbitmq-init', 'objects-init', 'postgres-prepare', 'migrate', 'crm-migrate', 'parties-migrate', 'sales_orders-migrate')
+    $states = @(docker compose ps -a --format '{{.Service}} {{.State}} {{.ExitCode}} {{.Health}}' 2>$null)
+    $wanted = @(docker compose config --services 2>$null)
+    $down = @(); $sick = @(); $failed = @(); $n = 0
+    foreach ($svc in $wanted) {
+      $line = $states | Where-Object { ($_ -split ' ')[0] -eq $svc } | Select-Object -First 1
+      $parts = if ($line) { $line -split ' ' } else { @($svc, '', '', '') }
+      $state = $parts[1]; $code = if ($parts.Count -gt 2) { $parts[2] } else { '' }; $health = if ($parts.Count -gt 3) { $parts[3] } else { '' }
+      if ($oneShot -contains $svc) {
+        if ($state -eq 'exited' -and $code -and $code -ne '0') {
+          if ($svc -eq 'migrate' -and $pending) { continue }
+          $failed += "$svc(exit $code)"
+        }
+        continue
+      }
+      $n++
+      if ($state -ne 'running') { $down += $(if ($state) { "$svc($state)" } else { $svc }) }
+      elseif ($health -eq 'unhealthy') { $sick += $svc }
+    }
+    if ($wanted.Count -eq 0) { Flag 'Docker Compose could not read the configuration. Check .env (a setting may be missing), then run this again.' }
+    if ($down) { Flag "Not running: $($down -join ' '). Start them: .\tarleaks.ps1 start   See why: .\tarleaks.ps1 logs <service>" }
+    if ($sick) { Flag "Running but failing its health check: $($sick -join ' '). See why: .\tarleaks.ps1 logs <service>; then .\tarleaks.ps1 restart" }
+    if ($failed) { Flag "A start-up step failed: $($failed -join ' '). See why: .\tarleaks.ps1 logs <step>, then .\tarleaks.ps1 start" }
+    if ($wanted.Count -gt 0 -and -not ($down -or $sick -or $failed)) { Ok "All $n services the chosen apps need are running" }
+    $project = Get-ComposeProject
+    if ($project -and $wanted.Count -gt 0) {
+      $extra = @(docker ps --filter "label=com.docker.compose.project=$project" --format '{{.Label "com.docker.compose.service"}}' 2>$null |
+        Sort-Object -Unique | Where-Object { $_ -and $wanted -notcontains $_ })
+      if ($extra) { Warn "Still running although no chosen app needs them: $($extra -join ' '). .\tarleaks.ps1 start stops them." }
+    }
+
+    Write-Host 'Apps'
+    $closure = Get-AppClosure (Get-CurrentApp)
+    $need = Get-AppRamMb $closure
+    $memText = (docker info --format '{{.MemTotal}}' 2>$null | Out-String).Trim()
+    $have = 0; if ($memText -match '^\d+$') { $have = [math]::Floor([double]$memText / 1MB) }
+    if ($have -gt 0 -and ($need + 1024) -gt $have) {
+      Flag "The chosen apps need about $(Gb $need) GB plus room to work; Docker has $(Gb $have) GB. Remove apps (.\tarleaks.ps1 apps), switch the editors off (.\tarleaks.ps1 editors off) or give Docker Desktop more memory (Settings, Resources)."
+    } elseif ($have -gt 0) { Ok "$(Get-AppName (Get-CurrentApp)): about $(Gb $need) GB needed, Docker has $(Gb $have) GB" }
+    else { Warn "$(Get-AppName (Get-CurrentApp)): about $(Gb $need) GB needed; how much memory Docker has is unknown (docker info did not say)." }
+
+    Write-Host 'Workspace'
+    $user = Get-EnvValue 'POSTGRES_USER'; if (-not $user) { $user = 'tarleaks' }
+    $db = Get-EnvValue 'POSTGRES_DB'; if (-not $db) { $db = 'tarleaks' }
+    if (Test-Running 'postgres') {
+      $rows = @(docker compose exec -T postgres psql -X -At -F ' ' -U $user -d $db -c "SELECT t.slug, r.status FROM auth.tenant_routing r JOIN auth.tenants t ON t.id = r.tenant_id ORDER BY r.created_at" 2>$null)
+      if ($rows.Count -eq 0) {
+        if ($pending) { Ok "Not set up yet: open $(Get-EnvValue 'TARLEAKS_URL') and enter the setup code (.\tarleaks.ps1 setup-code)" }
+        else { Warn 'No workspace database found yet.' }
+      }
+      foreach ($r in $rows) {
+        $f = $r.Trim() -split ' '
+        if ($f.Count -lt 2) { continue }
+        if ($f[1] -eq 'active') { Ok "Workspace $($f[0]): database ready" }
+        else { Flag "Workspace $($f[0]): its database is '$($f[1])', not 'active': the apps cannot open it. See .\tarleaks.ps1 logs auth" }
+      }
+    } else { Flag 'The database is not running (above), so the workspace cannot be checked.' }
+
+    Write-Host 'Messaging'
+    if (Test-Running 'rabbitmq') {
+      $queues = @(docker compose exec -T rabbitmq rabbitmqctl list_queues -q --no-table-headers name consumers messages 2>$null)
+      $running = @(docker compose ps --status running --services 2>$null)
+      $deaf = @(); $detail = @()
+      foreach ($q in $queues) {
+        $f = "$q".Trim() -split '\s+'
+        if ($f.Count -lt 3 -or -not $f[0]) { continue }
+        $name = $f[0]
+        # The same skips as the Linux doctor: dead-letter and helper queues,
+        # apps the kit does not ship, and the one queue release 1.0.0 never reads.
+        if ($name -match '\.(dlq|self-declare|scheduler)$' -or $name -match '^(social|meet)\.') { continue }
+        if ($name -in 'notifications.from-project_management', 'notifications.from-social') { continue }
+        $owner = ($name -split '\.')[0]
+        if ($running -notcontains $owner) { continue }
+        if ($f[1] -eq '0') {
+          if ($deaf -notcontains $owner) { $deaf += $owner }
+          $detail += "$name($($f[2]) waiting)"
+        }
+      }
+      if ($queues.Count -eq 0) { Warn 'Could not list the queues (rabbitmqctl did not answer).' }
+      elseif ($deaf) {
+        Flag "Running but not receiving events: $($deaf -join ' '). Usually after a restart of the computer or of the message queue. Fix: .\tarleaks.ps1 restart"
+        Write-Host "       Queues nobody reads: $($detail -join ' ')"
+      } else { Ok 'Every running app is receiving events' }
+    } else { Flag 'The message queue (rabbitmq) is not running (above).' }
+
+    Write-Host 'Address'
+    try { Invoke-WebRequest -UseBasicParsing -TimeoutSec 15 -Uri "$(Probe)/api/auth/installation" | Out-Null; Ok "Answers at $(Probe) (people use $(Get-EnvValue 'TARLEAKS_URL'))" }
+    catch { Flag "No answer at $(Probe). Start it: .\tarleaks.ps1 start (and check HTTP_PORT / HTTP_BIND in .env). See why: .\tarleaks.ps1 logs gateway" }
+
+    Write-Host 'Editors'
+    if (((Get-EnvValue 'COMPOSE_PROFILES') -split ',') -contains 'onlyoffice') {
+      $answer = ''
+      try {
+        $c = (Invoke-WebRequest -UseBasicParsing -TimeoutSec 10 -Uri "$(Probe)/onlyoffice/healthcheck").Content
+        if ($c -is [byte[]]) { $c = [System.Text.Encoding]::UTF8.GetString($c) }
+        $answer = "$c".Trim()
+      } catch { $answer = '' }
+      if ($answer -eq 'true') { Ok "The document editor answers at $(Get-EnvValue 'TARLEAKS_URL')/onlyoffice/" }
+      elseif (Test-Running 'onlyoffice') { Warn 'The document editor is running but does not answer yet (the first start takes a minute or two). If it stays like this: .\tarleaks.ps1 logs onlyoffice onlyoffice-proxy' }
+      else { Flag 'The document editor is not running: New and Edit in Documents will not work. Start it: .\tarleaks.ps1 start   See why: .\tarleaks.ps1 logs onlyoffice' }
+    } else { Ok 'The document editor is off (Documents has no New or Edit; .\tarleaks.ps1 editors on)' }
+
+    $offline = Get-EnvValue 'TARLEAKS_OFFLINE'; if (-not $offline) { $offline = 'false' }
+    Write-Host 'Licence server'
+    if ($offline -ne 'false') { Ok 'Not checked: this installation runs offline (the licence key decides)' }
+    elseif (-not (Test-Running 'auth')) { Warn 'Not checked: the sign-in service (auth) is not running (above).' }
+    else {
+      docker compose exec -T auth curl -fsS -o /dev/null --max-time 10 https://tarleaks.com/api/activation/public-key *> $null
+      if ($LASTEXITCODE -eq 0) { Ok 'tarleaks.com is reachable from the ERP' }
+      else { Flag 'tarleaks.com is NOT reachable from the ERP: the licence check-in will fail. Allow outbound HTTPS (port 443) to tarleaks.com, or set HTTPS_PROXY in .env.' }
+    }
+
+    Write-Host 'Image downloads'
+    if ($offline -ne 'false') { Ok 'Not checked: offline. Upgrades come as an offline bundle (.\tarleaks.ps1 load-bundle)' }
+    elseif (-not (Test-RegistryTakesLicence)) { Ok "Images come from $(Get-RegistryValue) (your own registry: sign Docker in to it the way it says)" }
+    else {
+      $key = Get-RegistryLicenceKey
+      if (-not $key) { Warn 'No licence key to download with yet: upgrades and new apps cannot download. Enter the key in Settings, Licence (or .\install.ps1 -LicenceKey <key>).' }
+      elseif (-not (Test-LicenceKeyShape $key)) { $key = $null; Flag 'The licence key this installation downloads with is not a licence key (damaged when it was copied?). Enter it again in Settings, Licence (or .\install.ps1 -LicenceKey <key>).' }
+      else {
+        # curl.exe uses the outbound proxy from .env, as the Linux doctor does.
+        $proxy = Get-EnvValue 'HTTPS_PROXY'; $saved = $env:HTTPS_PROXY
+        if ($proxy) { $env:HTTPS_PROXY = $proxy }
+        try { $rc = Test-RegistryKey (Get-RegistryHost) $key } finally { $env:HTTPS_PROXY = $saved }
+        $key = $null
+        switch ($rc) {
+          0 { Ok "$(Get-RegistryHost) accepts the licence key: upgrades can download" }
+          1 { $script:problems++ }
+          default { Warn "Could not reach $(Get-RegistryHost) from this computer: upgrades need outbound HTTPS to it and to tarleaks.com." }
+        }
+      }
+    }
+
+    Write-Host 'Clock'
+    if ($offline -ne 'false') { Ok 'Not checked: offline. Keep this computer on automatic time.' }
+    else {
+      try {
+        $resp = Invoke-WebRequest @web -Method Head -TimeoutSec 10 -Uri 'https://tarleaks.com'
+        $remote = [DateTimeOffset]::Parse(($resp.Headers['Date'] | Select-Object -First 1), [Globalization.CultureInfo]::InvariantCulture)
+        $skew = [math]::Abs(([DateTimeOffset]::UtcNow - $remote).TotalSeconds)
+        if ($skew -gt 600) { Flag "This computer's clock is $([math]::Round($skew))s off. Turn on automatic time (Settings, Time and language): the licence refuses a clock that runs behind." }
+        else { Ok "Clock is correct (+/-$([math]::Round($skew))s)" }
+      } catch { Warn 'Not checked: tarleaks.com did not answer.' }
+    }
+
+    # The gateway reads its routes through a file watch (inotify). Out of
+    # inotify instances (fs.inotify.max_user_instances, in the WSL 2 engine
+    # behind Docker Desktop), it starts with NO routes: every page 404s.
+    Write-Host 'Gateway'
+    if (-not (Test-Running 'gateway')) { Warn 'The gateway is not running, so nobody can open the ERP. See why: .\tarleaks.ps1 logs gateway' }
+    else {
+      $gwId = "$(docker compose ps -q gateway 2>$null | Select-Object -First 1)".Trim()
+      $since = if ($gwId) { "$(docker inspect -f '{{.State.StartedAt}}' $gwId 2>$null)".Trim() } else { '' }
+      $gwLog = if ($since) { @(docker compose logs --no-color --since $since gateway 2>&1) -join "`n" } else { '' }
+      if ($gwLog -match '(?i)cannot start the provider \*file|inotify') {
+        Flag 'The gateway started without its routes ("couldn''t initialize inotify: too many open files"), so every page answers 404. Raise the limit in the WSL 2 engine behind Docker Desktop (docs/troubleshooting.md, the "404 page not found" row), then .\tarleaks.ps1 restart.'
+      } else {
+        $inotify = "$(docker compose exec -T gateway cat /proc/sys/fs/inotify/max_user_instances 2>$null)".Trim()
+        $ncont = @(docker ps -q 2>$null).Count
+        if ($inotify -match '^\d+$' -and [int]$inotify -le 128 -and $ncont -gt 60) {
+          Warn "Docker allows only $inotify inotify instances and runs $ncont containers: at the next restart the gateway may start without its routes (every page 404). docs/troubleshooting.md, the `"404 page not found`" row."
+        } else { Ok "The gateway started with its routes$(if ($inotify) { " (inotify instances allowed: $inotify)" })" }
+      }
+    }
+
+    Write-Host 'Disk'
+    $drive = (Get-Item -LiteralPath $PSScriptRoot).PSDrive
+    if ($drive -and $null -ne $drive.Free) {
+      $freeGb = [math]::Floor($drive.Free / 1GB)
+      if ($freeGb -lt 5) { Flag "Only $freeGb GB free on $($drive.Name):. Below 5 GB the database can stop. Free space: docker image prune; move old backups off the computer. (Docker Desktop keeps its data in its own disk: Settings, Resources.)" }
+      else { Ok "$freeGb GB free on $($drive.Name): for this folder (Docker Desktop keeps its data in its own disk: Settings, Resources)" }
+    }
+  } finally { $ErrorActionPreference = $old }
+  return $script:problems
+}
+
+# .\tarleaks.ps1 doctor -Bundle [file]: one file a support person can read
+# without a call (the Windows twin of ./tarleaks doctor --bundle). Every file
+# passes scripts/lib-scrub.ps1 before it is packed; the temporary folder is
+# removed whatever happens; nothing is sent anywhere.
+function New-SupportBundle([string] $Out) {
+  if (-not $Out) { $Out = Join-Path 'backups' ("tarleaks-support-{0}.tar.gz" -f (Get-Date -Format 'yyyyMMdd-HHmmss')) }
+  if ($Out -notlike '*.tar.gz') { $Out = "$Out.tar.gz" }
+  if (Test-Path -LiteralPath $Out) { Die "$Out already exists. Choose another name." }
+  $parent = Split-Path -Parent $Out; if ($parent -and -not (Test-Path -LiteralPath $parent)) { New-Item -ItemType Directory -Path $parent | Out-Null }
+  # Windows' own tar (bsdtar, Windows 10 1803 and later) understands drive
+  # letters; a Git-for-Windows GNU tar earlier on PATH would read D:\x as a host.
+  $tarExe = if ($env:SystemRoot -and (Test-Path -LiteralPath (Join-Path $env:SystemRoot 'System32\tar.exe'))) { Join-Path $env:SystemRoot 'System32\tar.exe' }
+            elseif (Get-Command tar -ErrorAction SilentlyContinue) { 'tar' } else { '' }
+  if (-not $tarExe) { Die 'This computer has no tar program (Windows 10 version 1803 or later has one). Update Windows, then run this again.' }
+  # An absolute path (D:\Support\x.tar.gz, /tmp/x.tar.gz) is used as it is; a relative one from this folder.
+  $outFull = if ([System.IO.Path]::IsPathRooted($Out)) { [System.IO.Path]::GetFullPath($Out) } else { [System.IO.Path]::GetFullPath((Join-Path (Get-Location) $Out)) }
+  $dir = Join-Path ([System.IO.Path]::GetTempPath()) ("tarleaks-support-" + [guid]::NewGuid().ToString('N'))
+  New-Item -ItemType Directory -Path (Join-Path $dir 'logs') -Force | Out-Null
+  $old = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+  try {
+    Write-Host "Collecting the doctor's report..."
+    $exe = (Get-Process -Id $PID).Path
+    & $exe -NoProfile -ExecutionPolicy Bypass -File $PSCommandPath doctor *> (Join-Path $dir 'doctor.txt')
+    Write-Host 'Collecting versions and containers...'
+    $memText = (docker info --format '{{.MemTotal}}' 2>$null | Out-String).Trim()
+    $mem = if ($memText -match '^\d+$') { [math]::Floor([double]$memText / 1MB) } else { 0 }
+    @(
+      "made: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss zzz')",
+      "release: $(Get-EnvValue 'TARLEAKS_VERSION')",
+      "apps: $(Get-CurrentApp)",
+      "kit: $(if (Get-Command git -ErrorAction SilentlyContinue) { $kit = (git describe --always --dirty 2>$null | Out-String).Trim() }; if ($kit) { $kit } else { 'not a git checkout' })",
+      "system: $([System.Environment]::OSVersion.VersionString) ($env:PROCESSOR_ARCHITECTURE)",
+      "powershell: $($PSVersionTable.PSVersion)",
+      "docker: $((docker version --format '{{.Server.Version}}' 2>$null | Out-String).Trim())",
+      "compose: $((docker compose version --short 2>$null | Out-String).Trim())",
+      "memory for docker (MB): $mem",
+      "cpus for docker: $((docker info --format '{{.NCPU}}' 2>$null | Out-String).Trim())"
+    ) | Set-Content -LiteralPath (Join-Path $dir 'versions.txt') -Encoding UTF8
+    docker compose ps -a *> (Join-Path $dir 'containers.txt')
+    docker compose images *> (Join-Path $dir 'images.txt')
+    Get-PSDrive -PSProvider FileSystem | Format-Table Name, Used, Free -AutoSize | Out-String | Set-Content -LiteralPath (Join-Path $dir 'disk.txt') -Encoding UTF8
+    Get-EnvKeyReport $envPath | Set-Content -LiteralPath (Join-Path $dir 'env-keys.txt') -Encoding UTF8
+    Write-Host 'Collecting the last 2000 log lines of each service...'
+    $services = @(docker compose config --services 2>$null)
+    if ($services.Count -eq 0) {
+      Warn 'Docker Compose could not list the services (a setting in .env is missing?): the bundle has no logs.'
+      'docker compose config --services listed nothing: logs skipped' | Set-Content -LiteralPath (Join-Path $dir 'logs/none.txt')
+    }
+    foreach ($svc in $services) { docker compose logs --no-color --tail 2000 $svc *> (Join-Path $dir "logs/$svc.log") }
+    if (Test-Running 'postgres') {
+      Write-Host 'Collecting database sizes and migration heads...'
+      $user = Get-EnvValue 'POSTGRES_USER'; if (-not $user) { $user = 'tarleaks' }
+      $db = Get-EnvValue 'POSTGRES_DB'; if (-not $db) { $db = 'tarleaks' }
+      docker compose exec -T postgres psql -X -U $user -d $db -c "SELECT datname AS database, pg_size_pretty(pg_database_size(datname)) AS size FROM pg_database WHERE NOT datistemplate ORDER BY 1" *> (Join-Path $dir 'databases.txt')
+      $dbs = @(docker compose exec -T postgres psql -X -At -U $user -d $db -c "SELECT datname FROM pg_database WHERE NOT datistemplate AND datname <> 'postgres'" 2>$null)
+      $sql = "SELECT string_agg(format('SELECT %L AS schema, max(version) AS head, count(*) AS applied, bool_and(success) AS all_ok FROM %I._sqlx_migrations', table_schema, table_schema), ' UNION ALL ') FROM information_schema.tables WHERE table_name = '_sqlx_migrations'" + "`n\gexec`n"
+      $mig = foreach ($d in $dbs) { $d = $d.Trim(); if (-not $d) { continue }; "== $d"; $sql | docker compose exec -T postgres psql -X -U $user -d $d 2>&1 }
+      $mig | Set-Content -LiteralPath (Join-Path $dir 'migrations.txt') -Encoding UTF8
+    }
+    # Fail closed: a file that cannot be scrubbed stops the bundle (the
+    # temporary folder is removed below), it is never packed as it is.
+    $ErrorActionPreference = 'Stop'
+    try {
+      $secrets = @(Get-ScrubSecret $envPath)
+      # Windows PowerShell writes the script's own path (with the Windows user
+      # name) into captured error text: take this computer's home folder out too.
+      $homes = foreach ($h in @($HOME, $env:USERPROFILE) | Where-Object { $_ -and $_.Length -ge 4 }) {
+        $h; $h.ToLowerInvariant(); $h.Replace('\', '/'); $h.Replace('\', '\\')
+      }
+      foreach ($p in $homes | Select-Object -Unique) {
+        $secrets = @([pscustomobject]@{ Key = 'home-folder'; Value = $p }) + $secrets
+      }
+      Get-ChildItem -LiteralPath $dir -Recurse -File | ForEach-Object { Protect-SupportFile $envPath $_.FullName $secrets }
+    } catch { Die "A file could not be cleaned of secrets ($($_.Exception.Message)). Nothing was kept." }
+    $ErrorActionPreference = 'Continue'
+    & $tarExe -czf $outFull -C $dir .
+    if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $outFull)) {
+      Remove-Item -LiteralPath $outFull -Force -ErrorAction SilentlyContinue
+      Die 'Packing the bundle failed (tar). Nothing was kept.'
+    }
+  } finally {
+    $ErrorActionPreference = $old
+    Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue
+  }
+  $size = '{0:N1} MB' -f ((Get-Item -LiteralPath $outFull).Length / 1MB)
+  Ok "Support bundle written to $Out ($size)."
+  Write-Host '  Passwords and keys from .env, licence keys, tokens, e-mail addresses, bank account, Emirates ID and phone numbers in known shapes were taken out.'
+  Write-Host '  Logs can still name people, companies or numbers in other shapes: look inside before you send it:'
+  Write-Host "    mkdir `$env:TEMP\tarleaks-support; tar -xzf $Out -C `$env:TEMP\tarleaks-support; notepad `$env:TEMP\tarleaks-support\doctor.txt"
+  Write-Host '  Then attach it to your support request. It is not sent anywhere by itself.'
 }
 
 switch ($Command) {
@@ -1053,6 +1400,16 @@ rm -rf .tarleaks-restore-new .tarleaks-restore-old
     } finally {
       if ($work -and (Test-Path -LiteralPath $work)) { Remove-Item -LiteralPath $work -Recurse -Force }
     }
+  }
+  'doctor'  {
+    # -Bundle, or the Linux spelling --bundle, with an optional file name.
+    if ($Argument -eq '--bundle') { New-SupportBundle $(if ($Rest) { $Rest[0] } else { '' }); exit 0 }
+    if ($Bundle) { New-SupportBundle $Argument; exit 0 }
+    if ($Argument) { Die 'usage: .\tarleaks.ps1 doctor [-Bundle [file.tar.gz]]' }
+    $p = Invoke-Doctor
+    Write-Host ''
+    if ($p -gt 0) { Write-Host "$p problem(s) found ([x] above)." -ForegroundColor Red; exit 1 }
+    Ok 'No problems found.'
   }
   default   { Get-Help $PSCommandPath -Examples }
 }

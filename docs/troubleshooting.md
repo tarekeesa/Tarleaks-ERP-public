@@ -38,6 +38,7 @@ Send these three outputs when you write to info@tarleaks.com.
 | "No .env here. Run ./install.sh first." | You are in the wrong folder, or the installer has not run | `cd` to the kit folder and run `./install.sh` |
 | "CPU architecture 'armv7l' is not supported" | A 32-bit operating system | Install a 64-bit one. Raspberry Pi: 64-bit Raspberry Pi OS. |
 | "Docker is in Windows-containers mode" | Docker Desktop is set to Windows containers | Right-click the Docker icon, **Switch to Linux containers**, run the installer again |
+| `service "postgres-prepare" didn't complete successfully: exit 2` on the first start | An older kit started the next step while the database was still setting up its new data folder | Run `./tarleaks start` again (Windows `.\tarleaks.ps1 start`). Nothing is lost: the database is ready by then. Kits from this release wait for it. |
 | "Not answering yet after 10 minutes" | The first start prepares the database and needs time, or there is not enough memory or a slow disk | Run `./tarleaks doctor` and `./tarleaks logs auth`. Check memory below. Give a slow disk or a Raspberry Pi extra minutes. |
 | PowerShell: "running scripts is disabled on this system" | The execution policy | `Set-ExecutionPolicy -Scope Process Bypass`, then run the script again in the same window |
 | PowerShell: the script is "not digitally signed" or from the internet | The kit came from a ZIP download | `Get-ChildItem -Recurse \| Unblock-File` in the kit folder |
@@ -114,7 +115,7 @@ What each app needs: [apps.md](apps.md).
 | Data entered in one app does not show up in another (a payroll run never reaches the ledger, a new employee never gets a welcome task, notifications stop) and `./tarleaks doctor` says "Running but not receiving events" | After a reboot an app started before the message queue was ready and stopped listening for events. The kit makes every app wait for the queue, but an app can still lose it later (the queue restarted on its own, or ran out of memory) | `./tarleaks restart`. Events sent while it was deaf wait in the queue (up to 30 days, 200,000 per queue) and are delivered then |
 | The address answers "Empty reply from server" (curl) or the browser says the connection was closed, right after the computer restarted; `./tarleaks status` shows everything running | Docker Desktop lost the gateway's port forwarding during the restart | `docker compose up -d --force-recreate gateway`. On a server, use Docker Engine instead of Docker Desktop ([requirements](requirements.md)) |
 | `mounts denied: The path … is not shared from the host and is not known to Docker` | Docker Desktop (Linux, macOS) only lets containers use folders it shares. The kit is outside them | Move the kit under your home folder, or add its folder in Docker Desktop: **Settings, Resources, File sharing**, then `./tarleaks start` |
-| Every page answers `404 page not found` after a restart, although `./tarleaks status` shows everything running; `./tarleaks doctor` says "The gateway started without its routes", or `./tarleaks logs gateway` shows `couldn't initialize inotify: too many open files` | The gateway reads its routes through a file watch (inotify). Linux allows 128 watch instances by default, shared by every container that runs as root; on a machine with many containers they run out and the gateway starts with no routes. `./tarleaks doctor` warns about it in advance when the limit is 128 or lower and the machine runs more than 60 containers | Raise the limit and keep it after a reboot: `echo fs.inotify.max_user_instances=1024 \| sudo tee /etc/sysctl.d/60-tarleaks-inotify.conf && sudo sysctl --system`, then `./tarleaks restart` |
+| Every page answers `404 page not found` after a restart, although `./tarleaks status` shows everything running; `./tarleaks doctor` says "The gateway started without its routes", or `./tarleaks logs gateway` shows `couldn't initialize inotify: too many open files` | The gateway reads its routes through a file watch (inotify). Linux allows 128 watch instances by default, shared by every container that runs as root; on a machine with many containers they run out and the gateway starts with no routes. `./tarleaks doctor` warns about it in advance when the limit is 128 or lower and the machine runs more than 60 containers | Raise the limit and keep it after a reboot: `echo fs.inotify.max_user_instances=1024 \| sudo tee /etc/sysctl.d/60-tarleaks-inotify.conf && sudo sysctl --system`, then `./tarleaks restart`. Windows (Docker Desktop): the limit lives in its WSL 2 engine. Run `wsl --update`, then add `kernelCommandLine = sysctl.fs.inotify.max_user_instances=1024` under `[wsl2]` in `%UserProfile%\.wslconfig` (if a `kernelCommandLine` line is already there, add it to that line, separated by a space; see `examples/windows/wslconfig.example`), run `wsl --shutdown`, start Docker Desktop again and run `.\tarleaks.ps1 doctor`: its Gateway line shows the limit now in force ("inotify instances allowed: 1024"). If it still shows 128, your WSL version does not take the setting this way: contact info@tarleaks.com |
 | `./tarleaks doctor`: "A start-up step failed: migrate(exit 1)" | The database update step failed. Before the setup screen has been used there is no workspace, and doctor does not count it | `./tarleaks logs migrate`; then `./tarleaks start`. After an upgrade, its output is in `backups/pre-update-*/migrate.log` (or `backups/pre-upgrade-*/`) |
 | `./tarleaks doctor`: "Workspace …: its database is 'provisioning', not 'active'" | Setup stopped half-way while it prepared the workspace database | Send `./tarleaks doctor` and `./tarleaks logs auth` to info@tarleaks.com |
 
@@ -308,6 +309,10 @@ Make a support bundle, one file with everything support needs:
 ./tarleaks doctor --bundle
 ```
 
+```powershell
+.\tarleaks.ps1 doctor -Bundle
+```
+
 It writes `backups/tarleaks-support-<date>.tar.gz` (or the file you name:
 `./tarleaks doctor --bundle /tmp/support.tar.gz`) with:
 
@@ -336,8 +341,6 @@ less /tmp/tarleaks-support/doctor.txt
 ```
 
 Then write to info@tarleaks.com with what you did, what you expected, and the
-bundle attached. Nothing is sent anywhere by itself. (Windows: `tarleaks.ps1`
-has no doctor yet; send the output of `.\tarleaks.ps1 status` and
-`.\tarleaks.ps1 logs auth`.)
+bundle attached. Nothing is sent anywhere by itself. On Windows: `.\tarleaks.ps1 doctor -Bundle` (or `-Bundle D:\Support\erp.tar.gz`) makes the same file, with the same rules.
 
 Do not send `.env` or a backup: they hold your keys.

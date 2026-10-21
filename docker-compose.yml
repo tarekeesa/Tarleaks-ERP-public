@@ -229,6 +229,9 @@ services:
       interval: 5s
       timeout: 5s
       retries: 30
+      # Setting up a new data folder can take minutes on a slow disk. Those
+      # minutes now count as "not ready", so they must not use up the retries.
+      start_period: 120s
 
   # Every start: the extensions the ERP needs, in the platform database AND in
   # template1, which a new workspace database is copied from (without them

@@ -105,8 +105,8 @@ Details: [docs/requirements.md](docs/requirements.md).
 | `./tarleaks backup` | `.\tarleaks.ps1 backup` | Database, files and settings into `backups/` |
 | `./tarleaks restore <folder>` | `.\tarleaks.ps1 restore <folder>` | Put a backup back (checks it first, keeps what was there) |
 | `./tarleaks update` | `.\tarleaks.ps1 update` | Move to the newest release: check, back up, update, start, check again (`--to <release>`, `--check`) |
-| `./tarleaks doctor` | — | Check the installation and explain what is wrong |
-| `./tarleaks doctor --bundle` | — | The same, plus logs and versions, in one file for support, with passwords, keys and contact details in known shapes taken out ([docs/troubleshooting.md](docs/troubleshooting.md#still-stuck)) |
+| `./tarleaks doctor` | `.\tarleaks.ps1 doctor` | Check the installation and explain what is wrong |
+| `./tarleaks doctor --bundle` | `.\tarleaks.ps1 doctor -Bundle` | The same, plus logs and versions, in one file for support, with passwords, keys and contact details in known shapes taken out ([docs/troubleshooting.md](docs/troubleshooting.md#still-stuck)) |
 | `./tarleaks setup-code` | `.\tarleaks.ps1 setup-code` | Show the setup code again |
 | `./tarleaks load-bundle <folder>` | `.\tarleaks.ps1 load-bundle <folder>` | Load the images of an offline bundle (no internet needed) |
 | `./tarleaks uninstall` | `.\tarleaks.ps1 uninstall` | Remove the containers (`--purge` / `-Purge`: the data too) |

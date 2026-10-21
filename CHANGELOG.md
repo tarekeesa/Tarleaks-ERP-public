@@ -4,10 +4,21 @@ What changed in each release of the Tarleaks ERP self-hosted kit (this
 repository) and what an installation notices. How to move between releases:
 [docs/upgrading.md](docs/upgrading.md).
 
-## [Unreleased]
+## [1.2.0-rc.2.1] - 2026-10-21
+
+A **kit revision** for the 1.2.0-rc.2 programs: the installer, `./tarleaks`
+and the documentation change; the programs stay 1.2.0-rc.2 (the kit still
+installs them by default). Get it with
+`git fetch --tags && git checkout v1.2.0-rc.2.1`, then `./tarleaks start`.
 
 ### Added
 
+- **Windows: `.\tarleaks.ps1 doctor` and `.\tarleaks.ps1 doctor -Bundle [file]`.** The checks of the Linux and
+  macOS doctor that apply on Windows (Docker, containers and their health, leftover containers, memory for the chosen
+  apps, the workspace database, messaging, the document editor, the address, the licence server, image downloads, the
+  clock, free disk; the profile and addresses check covers what Windows offers — the local profile, or production behind your own HTTPS
+  reverse proxy —, and the gateway routes check reads the limit of the WSL 2 engine behind Docker Desktop), and the same support bundle as Linux and macOS, scrubbed by
+  `scripts/lib-scrub.ps1` with the same rules (proven in CI by `scripts/check-bundle-scrub.ps1`).
 - **`./tarleaks doctor --bundle [file]`**: one support file with the doctor's
   report, versions, containers, the last 2000 log lines of every service,
   database sizes and migration heads, and the names (never the values) of the

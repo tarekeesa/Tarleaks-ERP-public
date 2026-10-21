@@ -9,3 +9,8 @@
 memory=8GB
 processors=4
 swap=2GB
+# Many apps (more than about 60 containers): give the gateway room to watch its
+# route files, or it can start with no routes and answer 404 everywhere.
+# Run  wsl --update  first; afterwards .\tarleaks.ps1 doctor shows the limit in
+# force on its Gateway line ("inotify instances allowed: 1024").
+# kernelCommandLine = sysctl.fs.inotify.max_user_instances=1024

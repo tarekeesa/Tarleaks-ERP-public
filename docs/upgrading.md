@@ -141,12 +141,12 @@ What else changes for an installation you already run:
   disagree".
 - **More companies on the same server** become possible, each at its own
   address: [companies-and-domains.md](companies-and-domains.md).
-- **Diagram Studio is not in 1.2.0.** It is being rebuilt and returns in a
-  later release. If you run it on 1.0.0, the update leaves it out (with a
-  message) and keeps its data; it simply does not start, and the editors that
-  served it (the diagram editor, the drawing engine) do not run either. Nothing
-  else changes. When a release brings it back, add it again with
-  `./tarleaks apps add diagrams`.
+- **Diagram Studio** was left out of 1.2.0-rc.1 and rc.2 while it was rebuilt,
+  and is back from 1.2.0-rc.3. Its data is kept in every case. It now draws with
+  AI by itself, with each company's AI settings (Settings, AI), so the separate
+  drawing engine of 1.0.0 is gone. If you ran it on 1.0.0 and your apps list
+  still names it, it starts again on the new release. If it was left out in the
+  meantime, add it again with `./tarleaks apps add diagrams`.
 
 ## If the download fails
 

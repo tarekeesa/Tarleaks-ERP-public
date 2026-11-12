@@ -104,6 +104,94 @@ gzip -t backups/20261008-021500/database.sql.gz && echo "database ok"
 tar tzf backups/20261008-021500/files.tar.gz > /dev/null && echo "files ok"
 ```
 
+## From 1.3.0: off-site copies, encrypted (`--offsite`)
+
+Linux, macOS and Windows. A release whose `migrate` image does not have the
+backup engine yet says so and changes nothing.
+
+`./tarleaks backup --offsite` makes the usual backup, then an **encrypted, signed
+copy** of it in a place off this machine. That place is a folder: a share
+mounted from another machine (NAS, file server) or a second disk. Your own S3
+bucket and Tarleaks storage come later.
+
+The copy is encrypted to a key whose secret half is only in your **recovery
+kit**, a text file you print or copy away. Without it, nobody can open the
+copies — not you, not Tarleaks. With it, anybody can, so keep it like the keys
+to the building.
+
+Set it up once:
+
+```bash
+./tarleaks cloud backup-key init                       # writes recovery-kit-….txt here
+./tarleaks cloud backup-key verify --recovery-kit recovery-kit-….txt
+# print it, or copy it to two USB sticks kept in two places, then:
+./tarleaks cloud backup-key forget-secret --recovery-kit recovery-kit-….txt
+./tarleaks cloud backup target folder /mnt/backup-share  # mounted first
+./tarleaks backup --offsite                            # the first copy
+./tarleaks cloud backup schedule 02:30                 # every night
+```
+
+- The first copy refuses until the kit has been checked: a kit that does not
+  work loses every copy.
+- A folder on the same disk as the ERP is refused (an unmounted share looks
+  exactly like that). For a second disk that really is meant: add `--same-disk`.
+- If the share is not mounted at night (the folder is missing, or it is an empty
+  mount point without the marker `target folder` wrote), nothing is written to
+  this disk: the scheduled run still makes the local backup, says why there is
+  no off-site copy, and ends with an error so the log shows it.
+- `./tarleaks cloud backup list` shows the copies (newest first), `verify <copy>`
+  checks one without the kit, `prune` thins them (`7d,4w,3m`: the newest of each
+  of the last 7 days, 4 weeks and 3 months; change it with
+  `TARLEAKS_CLOUD_BACKUP_RETENTION` in `.env`). The scheduled run prunes by
+  itself and then removes local backups older than 7 days **that have an
+  off-site copy** (a backup whose copy failed is kept).
+- Each copy is numbered and chained to the one before, so a copy swapped for an
+  older one is noticed.
+- `./tarleaks cloud status` says what is set up.
+
+Put a copy back, on this machine or a new one:
+
+```bash
+./tarleaks cloud backup-key restore --recovery-kit recovery-kit-….txt   # a new machine only
+./tarleaks cloud backup target folder /mnt/backup-share                 # a new machine only
+./tarleaks restore --from-cloud --recovery-kit recovery-kit-….txt       # the newest copy
+./tarleaks restore --from-cloud 20261021T023000Z-3fa1c2d9 --recovery-kit recovery-kit-….txt
+```
+
+The copy is downloaded, its signature and every part checked, then opened into
+`backups/from-cloud-<copy>/`; nothing is changed until all of that passed. Then
+the ordinary restore runs and asks before replacing anything. That folder holds
+your data unencrypted: it is removed when the restore finishes (delete it
+yourself if you cancel).
+
+`forget-secret` deletes only the copy of the kit in this kit folder. The recovery
+kit, `.tarleaks/` and `logs/` are in `.gitignore`: never put them in a repository.
+
+**Windows** — the same commands with `.\tarleaks.ps1` and switches:
+
+```powershell
+.\tarleaks.ps1 cloud backup-key init
+.\tarleaks.ps1 cloud backup-key verify -RecoveryKit recovery-kit-....txt
+.\tarleaks.ps1 cloud backup-key forget-secret -RecoveryKit recovery-kit-....txt
+.\tarleaks.ps1 cloud backup target folder E:\TarleaksCopies     # a second disk
+.\tarleaks.ps1 backup -Offsite
+.\tarleaks.ps1 cloud backup schedule 02:30                      # a Scheduled Task
+.\tarleaks.ps1 restore -FromCloud -RecoveryKit recovery-kit-....txt
+```
+
+On Windows the folder must be on a disk Docker Desktop can reach: a second
+internal or USB disk. A mapped network drive (`Z:`) is invisible to Docker
+Desktop; for a NAS, wait for the S3 target. The scheduled task runs while you are
+signed in (a locked screen is fine), because Docker Desktop itself only runs in a
+signed-in session. Its log is `logs\offsite-backup.log`.
+
+Change the key with `./tarleaks cloud backup-key rotate`. Copies made before
+need the OLD kit, so keep it.
+
+What the copy cannot protect against: someone holding this server can make new,
+signed copies and, with the share's own permissions, delete copies in the folder.
+Give the share versioning or snapshots if you can.
+
 ## Schedule it
 
 Run `./tarleaks backup` every night. Three ways, all with ready-made files in

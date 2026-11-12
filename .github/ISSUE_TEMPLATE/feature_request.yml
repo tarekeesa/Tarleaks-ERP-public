@@ -1,0 +1,32 @@
+name: Feature request
+description: Suggest something Tarleaks ERP or the deployment kit should do.
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do?
+      description: The job or the problem, in your own words. What happens today, and why is it not enough?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What would help?
+      description: How you imagine it working. Screens, reports or commands you know from other tools are welcome.
+    validations:
+      required: true
+  - type: input
+    id: app
+    attributes:
+      label: App
+      description: Which app it belongs to, or "deployment kit".
+  - type: dropdown
+    id: importance
+    attributes:
+      label: How much does this matter to you?
+      options:
+        - Nice to have
+        - Important
+        - Blocking our use of Tarleaks ERP

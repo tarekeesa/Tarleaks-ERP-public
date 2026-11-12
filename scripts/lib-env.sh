@@ -112,9 +112,6 @@ env_problems() {
       for k in GROQ_API_KEY OLLAMA_API_KEY OLLAMA_BASE_URL DIAGRAMS_AI_BASE_URL HTTPS_PROXY HTTP_PROXY; do
         [ -z "$(env_get "$k")" ] || echo "ERROR TARLEAKS_OFFLINE=$offline but $k is set: that would reach out. Run ./tarleaks offline $offline again (it clears it)."
       done
-      case ",$(env_get COMPOSE_PROFILES)," in
-        *,diagrams-engine,*) echo "ERROR TARLEAKS_OFFLINE=$offline but the AI drawing engine (diagrams-engine) is on; it needs an online AI service. ./tarleaks offline $offline switches it off." ;;
-      esac
       v=$(env_get TARLEAKS_LICENSE_KEY)
       if [ -n "$v" ]; then
         h=$(env_licence_interval "$v")
@@ -236,5 +233,36 @@ env_signing_keys_note() {
     added) ok "Created the sign-in token key (two-step confirmation, sealed tenders)" ;;
     unavailable) warn "Could not create the sign-in token key yet (no openssl with Ed25519 here, and the message-queue image is not on this machine). Everything works except two-step confirmation; ./tarleaks start tries again." ;;
     mismatch) warn "JWT_SIGNING_KEY_DER is set in .env, but JWT_SIGNING_KID is empty or not in JWT_PUBLIC_KEYS: the sign-in service will not start. Put the three JWT_SIGNING_KID, JWT_SIGNING_KEY_DER and JWT_PUBLIC_KEYS lines back from a backup of .env, or delete all three lines to make a new key (everyone signs in again)." ;;
+  esac
+}
+
+# ---- The apps' own signing keys (Ed25519) -----------------------------------
+# Each its own key, never the sign-in token key, made like it (env_ed25519_pair)
+# and only its private half kept (base64 PKCS#8):
+#   LMS_PASSPORT_SIGNING_KEY_DER  learning certificates and passport links (LMS)
+#   BADGE_SIGNING_KEY_DER         Open Badges (Gamification)
+# Made once when missing and never replaced by a script: a new key makes the
+# certificates and badges issued before fail their check.
+#
+# Needs set_env. Prints "added" when a key was written, "unavailable" when one
+# is still missing (only issuing certificates and badges waits; the next
+# ./tarleaks start tries again), nothing when both are there.
+env_fill_app_signing_keys() {
+  local k pair added=""
+  for k in LMS_PASSPORT_SIGNING_KEY_DER BADGE_SIGNING_KEY_DER; do
+    [ -z "$(env_get "$k")" ] || continue
+    pair=$(env_ed25519_pair)
+    [ -n "$pair" ] || { echo unavailable; return 0; }
+    set_env "$k" "${pair%% *}"
+    added=1
+  done
+  [ -z "$added" ] || echo added
+}
+
+# The message for env_fill_app_signing_keys' answer (./install.sh and ./tarleaks).
+env_app_signing_keys_note() {
+  case "$1" in
+    added) ok "Created the signing keys of learning certificates and badges" ;;
+    unavailable) warn "Could not create the signing keys of learning certificates and badges yet (no openssl with Ed25519 here, and the message-queue image is not on this machine). Everything works except issuing those; ./tarleaks start tries again." ;;
   esac
 }

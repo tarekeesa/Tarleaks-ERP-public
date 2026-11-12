@@ -9,11 +9,22 @@
 #                                      check, back up, update, start, doctor
 #   ./tarleaks upgrade [version] [--offline]
 #                                      the update's inner step, without checks
-#   ./tarleaks backup [folder]         database + files + .env → backups/
+#   ./tarleaks backup [folder] [--offsite]
+#                                      database + files + .env → backups/
+#                                      (--offsite: then an encrypted copy off
+#                                      this machine, see `cloud` below)
 #   ./tarleaks restore <backup-folder> [--keep-settings]
 #                                      put a backup back (replaces current data;
 #                                      --keep-settings: keep this folder's name,
 #                                      port and address)
+#   ./tarleaks restore --from-cloud [copy] --recovery-kit <file>
+#                                      put an off-site copy back
+#   ./tarleaks cloud backup-key init | verify | forget-secret | restore | rotate
+#                                      the keys of the off-site copies, and the
+#                                      recovery kit that alone can open them
+#   ./tarleaks cloud backup target folder <path> | off
+#   ./tarleaks cloud backup list | verify <copy> | prune | schedule <HH:MM|off>
+#   ./tarleaks cloud status            what is set up for off-site copies
 #   ./tarleaks apps                    which apps run, and what each needs
 #   ./tarleaks apps add payroll        add apps (with what they need)
 #   ./tarleaks apps remove crm         remove apps (their data is kept)
@@ -22,11 +33,23 @@
 #   ./tarleaks network [local|office]  who may open the ERP: only this computer,
 #                                      or everyone on the network
 #   ./tarleaks offline [on|sealed|off] run without internet (docs/offline.md)
-#   ./tarleaks load-bundle <bundle>    load the images of an offline bundle
+#   ./tarleaks load-bundle <bundle>    load the images of an offline bundle (checks its Tarleaks signature;
+#                                      --allow-unsigned loads one without, at your own risk)
 #   ./tarleaks setup-code              print the setup code again
 #   ./tarleaks reset-admin <e-mail> [--company <name>] [--reset-two-factor]
 #                                      an administrator who cannot sign in gets
 #                                      a temporary password (no e-mail needed)
+#   ./tarleaks sample-data status|load|check|remove|resume|modules [options]
+#                                      From 1.2.0: a fictional company's records in a
+#                                      new company, and removed again exactly
+#                                      (docs/sample-data.md)
+#   ./tarleaks migrate-from-cloud <code> [--switch-over]
+#                                      From 1.2.0: move a company from Tarleaks
+#                                      Cloud to this new installation, then
+#                                      switch over (docs/move-from-cloud.md)
+#   ./tarleaks migrate-from-cloud --status | --resume | --switch-over | --cancel
+#                                      watch it again, go on after a stop,
+#                                      switch over, or stop and remove the copy
 #   ./tarleaks doctor                  check the installation, explain problems
 #   ./tarleaks doctor --bundle [file]  the same, plus logs and versions, in one
 #                                      file for support (secrets taken out)
@@ -69,7 +92,7 @@ RESTORE_KEEP_KEYS="COMPOSE_PROJECT_NAME HTTP_PORT HTTP_BIND TARLEAKS_HOST TARLEA
 # Kept on EVERY restore: the message queue's account is made once, when this
 # folder's queue volume is first created, and a restore does not touch that
 # volume. The backup's password would lock every service out of the queue.
-RESTORE_ALWAYS_KEEP="RABBITMQ_USER RABBITMQ_PASSWORD"
+RESTORE_ALWAYS_KEEP="RABBITMQ_USER RABBITMQ_PASSWORD TARLEAKS_CLOUD_BACKUP TARLEAKS_OFFSITE_FOLDER TARLEAKS_CLOUD_BACKUP_RETENTION"
 # An .env written before the rename has NEXUS_<key> lines. Rename each to
 # TARLEAKS_<key> in place, keeping its value (keys are never regenerated). The
 # containers get both names, so an image pinned before the rename still starts.
@@ -114,6 +137,10 @@ port() { local p; p=$(env_get HTTP_PORT); printf '%s' "${p:-80}"; }
 . scripts/lib-env.sh
 # shellcheck source=scripts/lib-scrub.sh
 . scripts/lib-scrub.sh
+# shellcheck source=scripts/lib-cloud.sh
+. scripts/lib-cloud.sh
+# shellcheck source=scripts/lib-move.sh
+. scripts/lib-move.sh
 APPS_VERSION=$(env_get TARLEAKS_VERSION)
 
 # The apps this installation runs. An .env from before apps could be chosen has
@@ -170,8 +197,11 @@ fill_new_keys() {
       STORAGE_SECRET_KEY:hex32 JWT_SECRET:hex32 CLUSTER_DSN_KEY:b64 INTERNAL_TOKEN:hex32 \
       PORTAL_JWT_SECRET:hex32 NOTIFICATIONS_KEK:b64 NOTIFICATIONS_UNSUB_SECRET:hex32 \
       NOTIFICATIONS_OAUTH_SECRET:hex32 HELPDESK_TOKEN_KEY:b64 SUBSCRIPTIONS_KEY_SEAL_KEY:b64 \
-      MARKETPLACE_TOKEN_KEY:b64 INSIGHTS_SOURCE_KEY:b64 PROCUREMENT_KEK:b64 \
-      CONTRACTS_PROVIDER_KEY:b64 ONLYOFFICE_JWT_SECRET:hex32; do
+      MARKETPLACE_TOKEN_KEY:b64 INSIGHTS_SOURCE_KEY:b64 INSIGHTS_VISITOR_HASH_KEY:hex32 \
+      PROCUREMENT_KEK:b64 CONTRACTS_PROVIDER_KEY:b64 ACTIVITIES_INVITE_SECRET:hex32 \
+      CORRESPONDENCE_MAILBOX_KEY:b64 CRM_EMAIL_TOKEN_KEY:b64 EINVOICE_SEAL_KEY:b64 \
+      PDFTOOLS_SIGN_KEY:b64 SOCIAL_TOKEN_KEY:b64 SSO_CREDENTIAL_KEY:hex32 \
+      ONLYOFFICE_JWT_SECRET:hex32; do
     k=${pair%%:*}; gen=${pair#*:}
     cur=$(env_get "$k")
     [ -z "$cur" ] || [ "$cur" = GENERATED ] || continue
@@ -183,6 +213,7 @@ fill_new_keys() {
   done
   [ "$n" = 0 ] || ok "Added $n setting(s) this kit needs to .env (new keys only; existing values unchanged)"
   env_signing_keys_note "$(env_fill_signing_keys)"
+  env_app_signing_keys_note "$(env_fill_app_signing_keys)"
 }
 
 sync_apps() { apply_apps "$(current_apps)"; sync_compose_files; }
@@ -333,6 +364,33 @@ toolbox() { # folder-on-this-machine script
   docker compose run --rm --no-deps -T -e HOST_ID="$(id -u):$(id -g)" \
     -v "$1:/backup" toolbox "$2"
 }
+# Every offline bundle Tarleaks publishes carries a cosign signature of its checksum list (SHA256SUMS.sigstore.json),
+# made with the Tarleaks release key; config/sigstore/tarleaks-release.pub is its public half. A bundle that is
+# unsigned, signed by anyone else or changed after signing is refused before anything is checked or loaded.
+# config/sigstore/trusted_root.json (Sigstore's public trust root) lets this work without internet.
+# RELEASE_PUBKEY and SIGSTORE_ROOT: scripts/lib-signature.sh (which also checks downloaded images).
+verify_signature() { # file — dies unless file.sigstore.json is the release key's valid signature of it
+  local f=$1 sig="$1.sigstore.json" out v
+  local args=(--key "$RELEASE_PUBKEY" --bundle "$sig")
+  if [ "${ALLOW_UNSIGNED:-}" = 1 ]; then
+    warn "Signature of $(basename "$f") NOT checked (--allow-unsigned). Load only a bundle you made or got from Tarleaks yourself."
+    return 0
+  fi
+  [ -f "$sig" ] || die "$(basename "$sig") is missing: this bundle is not signed by Tarleaks (or the file was not copied with it). Copy every file of the release, or, for a bundle you made yourself, add --allow-unsigned."
+  [ -f "$RELEASE_PUBKEY" ] || die "$RELEASE_PUBKEY is missing from this kit: it cannot check the bundle's signature. Update the kit (git pull), or add --allow-unsigned."
+  command -v cosign >/dev/null 2>&1 || die "cosign is needed to check the bundle's signature: install cosign 2.4 or later (one file: https://github.com/sigstore/cosign/releases), then run this again. Or add --allow-unsigned."
+  v=$(cosign version 2>/dev/null | sed -n 's/^GitVersion: *v\{0,1\}//p' | head -1)
+  case "$v" in 1.*|2.[0-3].*) die "cosign $v is too old to check this signature: install cosign 2.4 or later." ;; 2.*) args+=(--new-bundle-format) ;; esac
+  # Without internet the trust root comes from the kit; with internet cosign may also fetch a newer one.
+  if out=$(cosign verify-blob "${args[@]}" --trusted-root "$SIGSTORE_ROOT" "$f" 2>&1) \
+     || out=$(cosign verify-blob "${args[@]}" "$f" 2>&1); then
+    ok "Signed by Tarleaks: $(basename "$f")"
+  else
+    printf '%s\n' "$out" | tail -2 | sed 's/^/  /' >&2
+    die "The signature of $(basename "$f") does not verify: the bundle was changed or is not from Tarleaks. Do not load it; download it again from the release page."
+  fi
+}
+
 sha256_check() { # folder sums-file — verify, print only what fails
   local out rc=0
   if command -v sha256sum >/dev/null 2>&1; then
@@ -451,7 +509,9 @@ if [ -f .env ]; then use_migrate_image "$(env_get TARLEAKS_VERSION)"; fi
 case "$cmd" in
   start)
     env_signing_keys_note "$(env_fill_signing_keys)"
+    env_app_signing_keys_note "$(env_fill_app_signing_keys)"
     sync_apps
+    sig_require_verified "./tarleaks $cmd" || exit 1
     docker compose up -d --remove-orphans
     apps_stop_unselected
     wait_ready
@@ -461,7 +521,9 @@ case "$cmd" in
     ok "Stopped. Your data is kept; ./tarleaks start brings it back." ;;
   restart)
     env_signing_keys_note "$(env_fill_signing_keys)"
+    env_app_signing_keys_note "$(env_fill_app_signing_keys)"
     sync_apps
+    sig_require_verified "./tarleaks $cmd" || exit 1
     docker compose up -d --remove-orphans --force-recreate
     apps_stop_unselected
     wait_ready
@@ -522,21 +584,29 @@ print("Licence:  ", l.get("state","not configured") + (" - " + m if m else ""))
     if _apps_version_older "$v" "$APPS_ONLYOFFICE_OWN_IMAGE_FROM"; then oo_image=$APPS_ONLYOFFICE_STOCK_IMAGE; fi
     export TARLEAKS_ONLYOFFICE_IMAGE="$oo_image"
     # Only the services the TARGET release runs for these apps: an app it does
-    # not have (taken out, like Diagram Studio in 1.2.0, or not there yet) is
+    # not have (taken out in that release, or not there yet) is
     # not downloaded, so it cannot stop the upgrade. .env follows after the
     # backup (sync_apps below), with a message naming what was left out.
     target_profiles=$(APPS_VERSION=$v; r=$(apps_resolve "$(current_apps 2>/dev/null)" 2>/dev/null) \
       && c=$(apps_closure "$r") && printf '%s%s' "$(apps_units "$c")" "$(apps_addons "$c")") \
       || target_profiles=$(env_get COMPOSE_PROFILES)
-    if [ "$offline" = 0 ] && COMPOSE_PROFILES="$target_profiles" TARLEAKS_VERSION="$v" apps_pull "./tarleaks upgrade $v"; then
+    pull_rc=1
+    [ "$offline" = 1 ] || { COMPOSE_PROFILES="$target_profiles" TARLEAKS_VERSION="$v" apps_pull "./tarleaks upgrade $v" && pull_rc=0 || pull_rc=$?; }
+    if [ "$pull_rc" = 0 ]; then
       ok "Images for $v downloaded"
     else
+      # 3: downloaded, but not signed by Tarleaks (above). Never fall back to them.
+      [ "$pull_rc" != 3 ] || die "Nothing was changed: .env still names ${current:-the current version}, which keeps running."
       missing=$(COMPOSE_PROFILES="$target_profiles" TARLEAKS_VERSION="$v" missing_images) || die "Could not read the list of images from docker-compose.yml."
       if [ -n "$missing" ]; then
         echo "Not on this machine:"; printf '%s\n' "$missing" | sed 's/^/  /'
         [ "$offline" = 1 ] || bad "The download failed (see above)."
         die "Nothing was changed: .env still names ${current:-the current version}. Load the offline bundle for $v (./tarleaks load-bundle <folder>), or fix the download, then run this again."
       fi
+      # --offline (or an offline installation): refuse unchecked images, never check them online.
+      nd=${TARLEAKS_NO_DOWNLOAD:-0}; [ "$offline" != 1 ] || nd=1
+      TARLEAKS_NO_DOWNLOAD=$nd COMPOSE_PROFILES="$target_profiles" TARLEAKS_VERSION="$v" sig_require_verified "./tarleaks upgrade $v" \
+        || die "Nothing was changed: .env still names ${current:-the current version}, which keeps running."
       ok "Every image for $v is already on this machine"
     fi
     # 2. Back up while .env still names the release the data belongs to, so
@@ -643,7 +713,9 @@ print("Licence:  ", l.get("state","not configured") + (" - " + m if m else ""))
       # switched: start what is missing and run the (idempotent) database step.
       echo "Already on $to: making sure everything runs and the database is up to date."
       env_signing_keys_note "$(env_fill_signing_keys)"
+      env_app_signing_keys_note "$(env_fill_app_signing_keys)"
       sync_apps
+      sig_require_verified "./tarleaks update" || exit 1
       docker compose up -d --remove-orphans || die "Starting $to failed (above). See: ./tarleaks logs"
       apps_stop_unselected
       wait_ready || die "The ERP does not answer. See: ./tarleaks doctor"
@@ -696,8 +768,32 @@ print("Licence:  ", l.get("state","not configured") + (" - " + m if m else ""))
     # Everything is written into <folder>.partial and renamed to <folder> only
     # when every step worked: a folder without .partial is a complete backup.
     umask 077
-    [ $# -le 1 ] || die "usage: ./tarleaks backup [folder]"
-    dir=${1:-backups/$(date +%Y%m%d-%H%M%S)}
+    offsite=0; scheduled=0; dir=""
+    for a in "$@"; do
+      case "$a" in
+        --offsite) offsite=1 ;;
+        --scheduled) offsite=1; scheduled=1 ;;
+        -*) die "usage: ./tarleaks backup [folder] [--offsite]" ;;
+        *) [ -z "$dir" ] || die "usage: ./tarleaks backup [folder] [--offsite]"; dir=$a ;;
+      esac
+    done
+    # Check the off-site side BEFORE minutes of database work, not after. A
+    # scheduled run still makes the local backup when the off-site side is
+    # not ready (a share not mounted, off-site turned off): a nightly backup
+    # must never stop silently because of the copy.
+    offsite_missed=""
+    if [ "$offsite" = 1 ]; then
+      if [ "$scheduled" = 1 ]; then
+        if ! offsite_missed=$( (cloud_offsite_ready) 2>&1 ); then
+          offsite=0
+        else
+          offsite_missed=""
+        fi
+      else
+        cloud_offsite_ready
+      fi
+    fi
+    dir=${dir:-backups/$(date +%Y%m%d-%H%M%S)}
     dir=${dir%/}
     [ -n "$dir" ] || die "usage: ./tarleaks backup [folder]"
     if [ -e "$dir" ] && [ -n "$(ls -A "$dir" 2>/dev/null)" ]; then
@@ -745,18 +841,42 @@ print("Licence:  ", l.get("state","not configured") + (" - " + m if m else ""))
     trap - EXIT
     if [ "$(id -u)" = 0 ] && [ "$(kit_owner)" != "0:0" ]; then chown -R "$(kit_owner)" "$dir"; fi
     ok "Backup written to $dir ($(du -sh "$dir" | cut -f1): database, files, settings)."
-    warn "Anyone holding it can read all your data (the database is plain SQL) and has your keys: encrypt it before it leaves this machine (docs/backup-restore.md)." ;;
+    if [ "$offsite" = 1 ]; then
+      echo "Making the encrypted off-site copy…"
+      cloud_seal "$dir" || { warn "The local backup is in $dir; only the off-site copy is missing."; exit 1; }
+      [ "$scheduled" = 0 ] || cloud_after_scheduled_seal
+    elif [ -n "$offsite_missed" ]; then
+      printf '%s\n' "$offsite_missed" >&2
+      bad "No off-site copy tonight (above); the local backup is in $dir."
+      exit 1
+    else
+      warn "Anyone holding it can read all your data (the database is plain SQL) and has your keys: encrypt it before it leaves this machine (docs/backup-restore.md), or use ./tarleaks backup --offsite."
+    fi ;;
   restore)
     [ $# -ge 1 ] || die "usage: ./tarleaks restore <backup-folder> [--keep-settings]   (the backups are in backups/)"
-    skip_safety=0; keep=0; src=""
-    for a in "$@"; do
-      case "$a" in
+    skip_safety=0; keep=0; src=""; from_cloud=0; cloud_copy=""; cloud_kit=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
         --no-safety-backup) skip_safety=1 ;;
         --keep-settings) keep=1 ;;
-        -*) die "Unknown option: $a (usage: ./tarleaks restore <backup-folder> [--keep-settings] [--no-safety-backup])" ;;
-        *) [ -z "$src" ] || die "usage: ./tarleaks restore <backup-folder>"; src=$a ;;
+        --from-cloud)
+          from_cloud=1
+          case "${2:-}" in ""|-*) ;; *) cloud_copy=$2; shift ;; esac ;;
+        --recovery-kit) [ -n "${2:-}" ] || die "usage: ./tarleaks restore --from-cloud [copy] --recovery-kit <file>"; cloud_kit=$2; shift ;;
+        -*) die "Unknown option: $1 (usage: ./tarleaks restore <backup-folder> [--keep-settings] [--no-safety-backup])" ;;
+        *) [ -z "$src" ] || die "usage: ./tarleaks restore <backup-folder>"; src=$1 ;;
       esac
+      shift
     done
+    [ -z "$cloud_kit" ] || [ "$from_cloud" = 1 ] || die "--recovery-kit is for --from-cloud: ./tarleaks restore --from-cloud [copy] --recovery-kit <file>"
+    if [ "$from_cloud" = 1 ]; then
+      [ -z "$src" ] || die "Give either a backup folder or --from-cloud, not both."
+      case "$cloud_copy" in */*|.*) die "\"$cloud_copy\" is not the name of an off-site copy (see ./tarleaks cloud backup list)." ;; esac
+      [ -n "$cloud_kit" ] || die "An off-site copy opens only with its recovery kit: ./tarleaks restore --from-cloud [copy] --recovery-kit <file>"
+      src=$(cloud_open_for_restore "$cloud_copy" "$cloud_kit")
+      ok "The off-site copy is opened into $src and checked. Restoring it now."
+      warn "$src holds your data UNENCRYPTED. It is removed when the restore finishes; if you cancel or the restore stops, delete it yourself: rm -rf $src"
+    fi
     [ -d "$src" ] || die "$src is not a folder. The backups are in backups/: ls backups"
     case "$src" in *.partial|*.partial/) die "$src is an unfinished backup (its name ends in .partial): it cannot be restored." ;; esac
     dir=$(cd "$src" && pwd)
@@ -871,11 +991,19 @@ print("Licence:  ", l.get("state","not configured") + (" - " + m if m else ""))
     trap - EXIT
     "$0" start
     ok "Restored from $dir"
+    if [ "$from_cloud" = 1 ]; then
+      # The unencrypted copy of the off-site copy is not needed any more: the
+      # data is restored and the encrypted copy is still off-site.
+      rm -rf "$dir"
+      ok "Removed the unencrypted folder $src; the encrypted copy stays off-site."
+    fi
     [ -z "${safety:-}" ] || echo "  What was there before is in $safety (delete it when you no longer need it)." ;;
   profile)
     p=${1:?usage: ./tarleaks profile small|standard|full}
     preset=$(apps_preset "$p") || die "usage: ./tarleaks profile small|standard|full"
     apply_apps "$preset"
+    # A larger profile adds apps: download (and check) their images first, like apps add.
+    apps_pull "./tarleaks profile $p" || exit 1
     docker compose up -d --remove-orphans
     apps_stop_unselected
     wait_ready ;;
@@ -927,6 +1055,7 @@ print("Licence:  ", l.get("state","not configured") + (" - " + m if m else ""))
           [ -z "$by" ] || die "Cannot remove $(apps_names "$t"): $(apps_names "$by") needs it. Remove both: ./tarleaks apps remove $t ${by//, / }"
         done
         apply_apps "$remaining"
+        sig_require_verified "./tarleaks apps remove $*" || exit 1
         docker compose up -d --remove-orphans
         apps_stop_unselected
         wait_ready
@@ -946,12 +1075,14 @@ print("Licence:  ", l.get("state","not configured") + (" - " + m if m else ""))
         sync_apps
         if [ "$sub" = on ]; then
           apps_pull "./tarleaks editors on" || exit 1
+        else
+          sig_require_verified "./tarleaks editors off" || exit 1
         fi
         docker compose up -d --remove-orphans
         apps_stop_unselected
         wait_ready
         wait_editor
-        if [ "$sub" = on ]; then ok "The editors are on. Documents: New and Edit; Diagrams: the editor$(case ",$(apps_addon_units "$(apps_closure "$(current_apps)")")," in *,diagrams-engine,*) printf ' and AI drawing' ;; esac)."
+        if [ "$sub" = on ]; then ok "The editors are on. Documents: New and Edit; Diagrams: the editor."
         else ok "The editors are off. Your documents and diagrams are kept; ./tarleaks editors on brings the editors back."; fi ;;
       *) die "usage: ./tarleaks editors [status | on | off]" ;;
     esac ;;
@@ -987,7 +1118,7 @@ print("Licence:  ", l.get("state","not configured") + (" - " + m if m else ""))
       *) die "usage: ./tarleaks network [status | local | office]" ;;
     esac ;;
   offline)
-    # on: no optional outside service (AI keys, the AI drawing engine); the
+    # on: no optional outside service (AI keys); the
     # mail relay and a NAS on your network still work. sealed: on, and nothing
     # inside Docker can leave this machine at all. off: back to normal (the
     # saved AI settings come back). docs/offline.md
@@ -1007,6 +1138,9 @@ print("Licence:  ", l.get("state","not configured") + (" - " + m if m else ""))
       off|false) mode=false ;;
       *) die "Use ./tarleaks offline on, sealed or off" ;;
     esac
+    # The restart below runs the images. Going offline, check them now, while this machine may
+    # still reach the registry (offline it cannot): a refusal changes nothing.
+    [ "$mode" = false ] || sig_require_verified "./tarleaks offline $mode" || die "Nothing was changed: the ERP keeps running as it is."
     offline_keys="GROQ_API_KEY OLLAMA_API_KEY OLLAMA_BASE_URL DIAGRAMS_AI_BASE_URL"
     if [ "$mode" = false ]; then
       for k in $offline_keys; do
@@ -1038,7 +1172,10 @@ print("Licence:  ", l.get("state","not configured") + (" - " + m if m else ""))
       false) ok "Online again." ;;
     esac ;;
   load-bundle)
-    src=${1:?usage: ./tarleaks load-bundle <bundle folder | .tar file | .tar.part-00 file>}
+    ALLOW_UNSIGNED=${TARLEAKS_ALLOW_UNSIGNED:-}
+    [ "${1:-}" = --allow-unsigned ] && { ALLOW_UNSIGNED=1; shift; }
+    [ "${2:-}" = --allow-unsigned ] && ALLOW_UNSIGNED=1
+    src=${1:?usage: ./tarleaks load-bundle [--allow-unsigned] <bundle folder | .tar file | .tar.part-00 file>}
     [ -e "$src" ] || die "$src not found."
     docker info >/dev/null 2>&1 || die "Docker is not running. Start it, then run this again."
     work=""
@@ -1060,6 +1197,8 @@ print("Licence:  ", l.get("state","not configured") + (" - " + m if m else ""))
         for f in "$src"/*.images.txt; do [ ! -f "$f" ] || check_platform "$f"; done
         for sums in "$src"/*.SHA256SUMS; do
           [ -f "$sums" ] || continue
+          # beside the pieces: checked when its signature came along (the one inside the bundle always is)
+          [ -f "$sums.sigstore.json" ] && verify_signature "$sums"
           echo "Checking the downloaded files against $(basename "$sums")…"
           sha256_check "$src" "$(basename "$sums")" || die "A downloaded file is damaged or incomplete (above). Download it again."
           ok "Downloaded files intact"
@@ -1086,6 +1225,7 @@ print("Licence:  ", l.get("state","not configured") + (" - " + m if m else ""))
     fi
     [ -f "$dir/SHA256SUMS" ] || die "$dir/SHA256SUMS is missing: the bundle cannot be checked."
     check_platform "$dir/images.txt"
+    verify_signature "$dir/SHA256SUMS"
     echo "Checking every image file against SHA256SUMS…"
     sha256_check "$dir" SHA256SUMS || die "The bundle is damaged (above). Copy it again."
     ok "Bundle intact"
@@ -1097,6 +1237,8 @@ print("Licence:  ", l.get("state","not configured") + (" - " + m if m else ""))
       # A bundle names its images where they were built; give them the name
       # this installation pulls (TARLEAKS_REGISTRY), so nothing is downloaded.
       printf '%s\n' "$out" | registry_adopt_loaded
+      # Loaded from a bundle whose signature was checked above: these images count as checked here.
+      [ "${ALLOW_UNSIGNED:-}" = 1 ] || printf '%s\n' "$out" | sig_record_loaded || exit 1
       n=$((n + 1))
     done
     [ "$n" -gt 0 ] || die "SHA256SUMS lists no files under images/: nothing to load."
@@ -1131,6 +1273,47 @@ print("Licence:  ", l.get("state","not configured") + (" - " + m if m else ""))
       0) ;;
       2) die "This release does not have reset-admin yet. Upgrade first (./tarleaks upgrade), then run it again." ;;
       *) die "The password was not reset: see the message above." ;;
+    esac ;;
+  sample-data)
+    # From 1.2.0: the sample company's records (a fictional UAE or Saudi company,
+    # its people, books, stock, sales and more) loaded into a new company, and
+    # removed again exactly; your own records are never changed or deleted.
+    # Runs in the auth service, which must be running. docs/sample-data.md
+    docker compose ps --status running --services 2>/dev/null | grep -qx auth \
+      || die "The ERP is not running. Start it first: ./tarleaks start"
+    perr=$(mktemp)
+    probe=$(docker compose exec -T auth /app/service sample-data modules 2>"$perr") || {
+      err=$(cat "$perr"); rm -f "$perr"
+      case "$err" in
+        *"unknown subcommand"*) die "This release does not have sample data yet (from 1.2.0). Update first (./tarleaks update), then run it again." ;;
+        *) printf '%s\n' "$err" "$probe" >&2; die "The sample data could not be reached: see the message above." ;;
+      esac
+    }
+    rm -f "$perr"
+    case "${1:-}" in
+      status|load|check|remove|resume) ;;
+      modules) printf '%s\n' "$probe"; exit 0 ;;
+      *)
+        echo "Usage: ./tarleaks sample-data status|load|check|remove|resume|modules [options]" >&2
+        echo "  status [--workspace <company>] [--json]          where it stands" >&2
+        echo "  load [--workspace <company>] [--install-packs] [--force-nonempty]" >&2
+        echo "                                                   load the sample into a new company" >&2
+        echo "  check [--workspace <company>]                    what would stop a removal" >&2
+        echo "  remove [--workspace <company>] [--adopt] --yes   take it out again (back up first)" >&2
+        echo "  resume [--workspace <company>] [--install-packs] go on after an interruption" >&2
+        echo "See docs/sample-data.md." >&2
+        exit 2 ;;
+    esac
+    rc=0
+    docker compose exec -T auth /app/service sample-data "$@" || rc=$?
+    case "$rc" in
+      0) ;;
+      2) die "That is not a sample-data option this release knows: ./tarleaks sample-data shows the list." ;;
+      *)
+        if [ "${1:-}" = remove ]; then
+          die "Nothing was removed: see the message above. ./tarleaks sample-data check lists what blocks a removal; remove --adopt --yes keeps those records."
+        fi
+        die "The sample data command stopped: see the message above. ./tarleaks sample-data status says where it stands (resume goes on, remove --yes takes it out)." ;;
     esac ;;
   setup-code)
     code=$(env_get TARLEAKS_SETUP_CODE)
@@ -1173,7 +1356,7 @@ print("Licence:  ", l.get("state","not configured") + (" - " + m if m else ""))
 
     echo "${B}Containers${N}"
     # One-shot steps run and exit; everything else must run (and be healthy).
-    one_shot=" rabbitmq-init objects-init postgres-prepare migrate crm-migrate parties-migrate sales_orders-migrate "
+    one_shot=" rabbitmq-init objects-init volume-owner postgres-prepare migrate crm-migrate parties-migrate sales_orders-migrate "
     states=$(docker compose ps -a --format '{{.Service}} {{.State}} {{.ExitCode}} {{.Health}}' 2>/dev/null)
     wanted=$(docker compose config --services 2>/dev/null)
     down=""; sick=""; failed=""; n=0
@@ -1387,6 +1570,10 @@ print("Licence:  ", l.get("state","not configured") + (" - " + m if m else ""))
       docker compose down --remove-orphans
       ok "Removed the containers. Your data is kept in Docker volumes (./tarleaks start brings everything back; ./tarleaks uninstall --purge deletes the data)."
     fi ;;
+  cloud)
+    cloud_main "$@" ;;
+  migrate-from-cloud)
+    move_main "$@" ;;
   help|-h|--help)
     sed -n '2,/^# ====/p' "$0" | grep -v '^# ====' | sed 's/^# \{0,1\}//' ;;
   *)

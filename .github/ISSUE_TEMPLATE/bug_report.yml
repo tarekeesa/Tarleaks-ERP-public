@@ -1,0 +1,69 @@
+name: Bug report
+description: Something in Tarleaks ERP does not work as it should on your installation.
+title: "[Bug]: "
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report this. Please do **not** include passwords, licence keys,
+        the setup code, `.env` contents, customer data or personal data. A security problem goes to
+        the private channel in SECURITY.md, never here.
+  - type: input
+    id: version
+    attributes:
+      label: Tarleaks ERP version
+      description: Settings, Licence, "This installation", or `grep ^TARLEAKS_VERSION .env`.
+      placeholder: 1.2.0-rc.3
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Server
+      options:
+        - Linux (x86_64)
+        - Linux (arm64)
+        - Windows (Docker Desktop / WSL 2)
+        - macOS (Docker Desktop)
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: app
+    attributes:
+      label: App or screen
+      description: Which app and page, for example "Payroll, Run payroll".
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: What you did, step by step, starting from a page someone else can open.
+      placeholder: |
+        1. Open ...
+        2. Click ...
+        3. See ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected, and what happened instead
+      description: Include the exact message the screen showed and its reference code, if it gave one.
+    validations:
+      required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: Output of `./tarleaks doctor`
+      description: Optional, but it often answers the question. Check it for anything private before you paste it.
+      render: text
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before you submit
+      options:
+        - label: I removed passwords, keys, the setup code and any personal or customer data from this report.
+          required: true

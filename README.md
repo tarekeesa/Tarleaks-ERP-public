@@ -66,7 +66,7 @@ Step by step for your kind of machine: **[docs/setup-guide.md](docs/setup-guide.
 | HR and CRM | 2 | 8 GB (4 GB with the editors off) | 20 GB |
 | `small` preset (HR, payroll, accounting, CRM, inventory, sales, chat …) | 2 | 8 GB (4 GB with the editors off) | 20 GB |
 | `standard` preset (+ projects, helpdesk, assets, fleet, learning, commerce …; procurement, construction and contracts from release 1.2.0) | 4 | 8 GB | 40 GB |
-| `full` (+ PDF tools with OCR, ISO compliance; diagrams on 1.0.0 only) | 8 | 16 GB | 80 GB |
+| `full` (+ PDF tools with OCR, ISO compliance; diagrams) | 8 | 16 GB | 80 GB |
 
 It runs on:
 
@@ -108,7 +108,9 @@ Details: [docs/requirements.md](docs/requirements.md).
 | `./tarleaks doctor` | `.\tarleaks.ps1 doctor` | Check the installation and explain what is wrong |
 | `./tarleaks doctor --bundle` | `.\tarleaks.ps1 doctor -Bundle` | The same, plus logs and versions, in one file for support, with passwords, keys and contact details in known shapes taken out ([docs/troubleshooting.md](docs/troubleshooting.md#still-stuck)) |
 | `./tarleaks setup-code` | `.\tarleaks.ps1 setup-code` | Show the setup code again |
-| `./tarleaks load-bundle <folder>` | `.\tarleaks.ps1 load-bundle <folder>` | Load the images of an offline bundle (no internet needed) |
+| `./tarleaks sample-data load` | `.\tarleaks.ps1 sample-data load` | **From 1.2.0.** Fill a new company with a fictional one to try the ERP; `remove --yes` takes it out exactly ([docs/sample-data.md](docs/sample-data.md)) |
+| `./tarleaks migrate-from-cloud <code>` | `.\tarleaks.ps1 migrate-from-cloud <code>` | **From 1.2.0.** Move a company from Tarleaks Cloud to this new server, check it, then switch over; `--status`, `--resume`, `--cancel` ([docs/move-from-cloud.md](docs/move-from-cloud.md)) |
+| `./tarleaks load-bundle <folder>` | `.\tarleaks.ps1 load-bundle <folder>` | Check the Tarleaks signature of an offline bundle, then load its images (no internet needed; [config/sigstore](config/sigstore/README.md)) |
 | `./tarleaks uninstall` | `.\tarleaks.ps1 uninstall` | Remove the containers (`--purge` / `-Purge`: the data too) |
 
 ## Upgrade
@@ -123,7 +125,7 @@ and runs `./tarleaks doctor`; your data and `.env` stay. If a step fails it
 prints the exact way back. What changed in each release:
 [CHANGELOG.md](CHANGELOG.md). Step by step, including the one-time move to
 1.2.0: [docs/upgrading.md](docs/upgrading.md). A release candidate such as
-`1.2.0-rc.2` is for evaluation on a fresh server, not for upgrading a running
+`1.2.0-rc.7` is for evaluation on a fresh server, not for upgrading a running
 installation.
 
 ## No internet on the server

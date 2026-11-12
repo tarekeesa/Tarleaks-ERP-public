@@ -2,8 +2,14 @@
 
 ## Reporting a vulnerability
 
-Please report a security problem **privately** to **dev@tarleaks.com**. Do not
-open a public issue, discussion or pull request for it.
+Report a security problem **privately**. Do not open a public issue, discussion
+or pull request for it.
+
+1. **Preferred:** use GitHub's private vulnerability reporting on this
+   repository: the **Security** tab, then **Report a vulnerability**. Only
+   Tarleaks sees the report, and we can talk to you and publish an advisory
+   from it.
+2. **If you cannot use GitHub:** e-mail **dev@tarleaks.com**.
 
 Include, as far as you can:
 
@@ -15,9 +21,6 @@ Include, as far as you can:
 We acknowledge a report within three working days and tell you what we will do
 and when. Please give us reasonable time to release a fix before you publish
 anything. We credit reporters who want to be credited.
-
-If GitHub's **Report a vulnerability** button is shown on this repository, you
-may use it instead; it reaches the same people.
 
 ## What is in scope
 

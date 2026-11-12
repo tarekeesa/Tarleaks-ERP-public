@@ -31,8 +31,9 @@ Send these three outputs when you write to info@tarleaks.com.
 | "An image is not published for this CPU" (`no matching manifest`) | A 32-bit system, or `DOCKER_DEFAULT_PLATFORM` forces another CPU type | 64-bit OS; `unset DOCKER_DEFAULT_PLATFORM` |
 | "Docker Hub limits anonymous downloads" (`toomanyrequests`) | Docker Hub's free download limit for your address | Wait a few hours, or `docker login` with a free Docker account |
 | "A certificate was not accepted while downloading" (`x509`) | A proxy inspects HTTPS | Exempt `registry.tarleaks.com`, `tarleaks.com` and Docker Hub from inspection, or set Docker's proxy ([examples/outbound-proxy](../examples/outbound-proxy/README.md)) |
-| "The server could not reach the image registries" (`dial tcp`, `timeout`, `no such host`) | No route to the registries | Allow the addresses in [setup-guide.md, step 3](setup-guide.md#3-open-the-network-paths) |
+| "The server could not reach the image registries" (`dial tcp`, `timeout`, `no such host`, `EOF`) | No route to the registries, or the connection kept dropping: the download was already tried three times (the line "Docker said:" above it shows the last error) | Allow the addresses in [setup-guide.md, step 3](setup-guide.md#3-open-the-network-paths); on a connection that drops often, run the same command again (what was downloaded is kept) |
 | "Docker is installed but not running (or this user may not use it)" | The Docker service is stopped, or your user is not allowed to use it | Start Docker. On Linux: `sudo usermod -aG docker $USER`, then log out and in. The message `permission denied ... docker.sock` is the same problem. |
+| The setup screen spins, then "Setup could not finish" (or the browser shows 408/504 after about 5 minutes) | First-run setup prepares the workspace; on a very slow or busy machine (little free memory, a slow disk) a step can take longer than the 300 s a long request is allowed | Add `HTTP_LONG_REQUEST_TIMEOUT_SECS=900` to `.env`, run `./tarleaks start`, then open the setup screen again and fill it in with the **same administrator e-mail and password**: setup continues where it stopped (the company and administrator the first attempt created are kept). If that password does not sign in afterwards: `./tarleaks reset-admin <e-mail>` (below). Check the machine: `./tarleaks doctor` |
 | "Docker Compose v2 is missing" | Only the old `docker-compose` is installed | Install the `docker-compose-plugin` package, or update Docker Desktop |
 | `RABBITMQ_PASSWORD is not set - run ./install.sh` (or another variable name) | `.env` is missing or incomplete | Run `./install.sh`. It keeps the values you already have and fills the gaps. |
 | "No .env here. Run ./install.sh first." | You are in the wrong folder, or the installer has not run | `cd` to the kit folder and run `./install.sh` |
@@ -300,6 +301,70 @@ idle, raise the proxy's read timeout for that path.
 - The database update reports a problem: `./tarleaks logs migrate`.
 - A restore ends with the ERP not answering: `./tarleaks logs auth`. Check that
   `.env` is the one from the same backup.
+
+### Off-site copies
+
+The off-site backup engine ends every refusal with a code in brackets.
+
+| Code | What it means | Fix |
+|---|---|---|
+| `backup.no_key` | No backup key yet | `./tarleaks cloud backup-key init` |
+| `backup.key_exists` | This server already has a key | To replace it: `./tarleaks cloud backup-key rotate` (older copies keep needing the older kit) |
+| `backup.kit_unverified` | The recovery kit has not been checked against this server's key | `./tarleaks cloud backup-key verify --recovery-kit <file>` |
+| `backup.kit_mismatch` | That kit is not this server's | Find the kit made for this server, or `rotate` to make a new key |
+| `backup.target_unset` / `backup.target_off` / `backup.target_unknown` | No off-site place is set, or `TARLEAKS_CLOUD_BACKUP` in `.env` holds an unknown word | `./tarleaks cloud backup target folder <path>` |
+| `backup.target_unreachable` | The folder cannot be reached or written (share not mounted, full, read-only) | Mount the share, free space, check its permissions. A folder that was never set up also says this: run `target folder <path>` once after mounting. The local backup is kept |
+| `backup.target_not_available` | S3 or Tarleaks storage asked of a release that has only folders | Use a folder for now |
+| `backup.no_space` | Not enough free disk beside the backup for its encrypted copy (about the backup's size again) | Free space (old backups in `backups/`) |
+| `backup.running` | Another copy is being made (a scheduled run) | Wait for it |
+| `backup.not_a_backup` | The folder is not a finished `./tarleaks backup` folder | Use a folder without `.partial` that holds `database.sql.gz` |
+| `backup.bad_retention` | `TARLEAKS_CLOUD_BACKUP_RETENTION` is not like `7d,4w,3m`, or keeps nothing | Fix it in `.env` |
+| `backup.clock` / `backup.newest_damaged` | Pruning stopped: the clock is wrong, or the newest copy is missing a part | Fix the clock; make a new copy. Nothing was removed |
+| `restore.wrong_kit` | That kit does not open this copy (it names the key the copy needs) | Use the kit from the time the copy was made |
+| `restore.bad_signature` | The copy was not signed with this installation's key: changed, or another server's | Try another copy; if it repeats, the folder may have been tampered with |
+| `restore.damaged` | A part is missing or changed | Try an older copy (`./tarleaks cloud backup list`) |
+| `restore.newer_release` | The copy is from a newer release than this server | `./tarleaks update` first |
+| `restore.no_space` | Opening needs about twice the copy's size free | Free space, or restore on a bigger disk |
+| `restore.no_such_copy` / `restore.into_not_empty` / `restore.kit_unreadable` | A typo in the copy's name, a leftover `backups/from-cloud-…` folder, or an incomplete kit file | Check the name with `list`; restore the leftover folder directly or remove it; use the complete kit |
+
+## Sample data
+
+**From 1.2.0.** The commands are in [sample-data.md](sample-data.md).
+
+- **"This release does not have sample data yet":** the release is older than
+  1.2.0. Update first (`./tarleaks update`).
+- **The load stops: "This workspace already has its own records":** the
+  sample goes into a new company: on a server with several companies (from
+  1.2.0, [companies-and-domains.md](companies-and-domains.md#companies)), load
+  into the new one with `--workspace <company>`. To load next to your records anyway,
+  add `--force-nonempty` (Windows: `-ForceNonempty`): the next check below still stops anything that would
+  collide.
+- **The load stops: "Sample data would collide with records you already
+  created":** the lines above the message list each record and what to do (at
+  most 50). Load into a new company, or change those records, then load again.
+  Nothing was written.
+- **Parts were skipped** (for example "the tax pack is not installed yet" or
+  "the payroll country pack is not installed yet"): run
+  `./tarleaks sample-data resume --install-packs` (Windows:
+  `.\tarleaks.ps1 sample-data resume -InstallPacks`), or install the packs in
+  Finance and Payroll, then `./tarleaks sample-data resume`.
+- **Removal is blocked: "Some of your own records use sample records, so
+  nothing was removed":** some of your own
+  records point at sample records (an invoice to a sample customer, a task for a
+  sample employee). `./tarleaks sample-data check` lists them. Change or delete
+  them and remove again, or keep the sample records they use:
+  `./tarleaks sample-data remove --adopt --yes`.
+- **A record is on hold:** a sample record you put on legal hold blocks the
+  removal until you release the hold.
+- **The licence page shows more employees than the licence allows:** the
+  sample's people count as employees while the sample is loaded. They cannot
+  sign in, so they use no sign-in seats.
+- **The command was interrupted** (a restart, a closed window, Ctrl+C):
+  `./tarleaks sample-data status` says where it stands. "loading" or
+  "removing" alone: the run is still going inside the ERP, wait. "The last run
+  was interrupted": `./tarleaks sample-data resume` (or `remove --yes`) goes on.
+- **"A sample-data run is already in progress on this server":** another run
+  is going (perhaps one whose window was closed). Wait, and check with `status`.
 
 ## Still stuck
 

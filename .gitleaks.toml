@@ -4,8 +4,8 @@
 #   container's own environment ($$RABBITMQ_USER, $$RABBITMQ_PASSWORD); any
 #   other `curl -u user:password` is still found.
 # - docker-compose.yml builds auth's PEM signing key from JWT_SIGNING_KEY_DER
-#   in .env (the BEGIN/END lines around a variable); a real private key in any
-#   file is still found.
+#   in .env, and gamification's from BADGE_SIGNING_KEY_DER (the BEGIN/END lines
+#   around a variable); a real private key in any file is still found.
 # No credential is written in this repository.
 [extend]
 useDefault = true
@@ -18,4 +18,7 @@ regexes = ['''-u "\$\$RABBITMQ_USER:\$\$RABBITMQ_PASSWORD"''']
 [[allowlists]]
 description = "compose wraps the signing key from .env in PEM lines"
 regexTarget = "line"
-regexes = ['''^\s*JWT_SIGNING_KEY: "\$\{JWT_SIGNING_KEY_DER:\+-----BEGIN PRIVATE KEY-----\}\\n\$\{JWT_SIGNING_KEY_DER:-\}\\n\$\{JWT_SIGNING_KEY_DER:\+-----END PRIVATE KEY-----\}\\n"$''']
+regexes = [
+  '''^\s*JWT_SIGNING_KEY: "\$\{JWT_SIGNING_KEY_DER:\+-----BEGIN PRIVATE KEY-----\}\\n\$\{JWT_SIGNING_KEY_DER:-\}\\n\$\{JWT_SIGNING_KEY_DER:\+-----END PRIVATE KEY-----\}\\n"$''',
+  '''^\s*BADGE_SIGNING_KEY: "\$\{BADGE_SIGNING_KEY_DER:\+-----BEGIN PRIVATE KEY-----\}\\n\$\{BADGE_SIGNING_KEY_DER:-\}\\n\$\{BADGE_SIGNING_KEY_DER:\+-----END PRIVATE KEY-----\}\\n"$''',
+]

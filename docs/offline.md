@@ -21,7 +21,6 @@ step: [faq.md](faq.md#can-i-install-without-internet).
 | | `on` | `sealed` |
 |---|---|---|
 | AI keys in `.env` (`GROQ_API_KEY`, `OLLAMA_*`, `DIAGRAMS_AI_BASE_URL`) | cleared (kept in `.env` as `#offline-saved` lines; `off` puts them back) | cleared |
-| The AI drawing engine (`diagrams-engine`) | not started | not started |
 | `./tarleaks doctor` | no internet checks (licence server, image registry, clock against tarleaks.com) | the same |
 | A mail relay, a NAS or a database on your **office network** | still reached | **not reached**: every service sits on a Docker network with no route out (`config/offline/compose.sealed.yml`); only the gateway also has a network, to receive your users |
 | Internet | not used by the ERP (see below) | impossible from any ERP container |

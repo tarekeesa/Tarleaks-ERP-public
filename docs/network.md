@@ -14,6 +14,7 @@ summary.
 |---|---|---|
 | Image downloads (`registry.tarleaks.com`, Docker Hub) | `./install.sh`, `./tarleaks update` and `./tarleaks upgrade` only | Needed, unless you use the [offline bundle](faq.md#can-i-install-without-internet) |
 | Licence check-in (`tarleaks.com`, HTTPS 443) | About every 6 hours | Needed, unless your licence key has check-ins switched off. See [licensing.md](licensing.md) |
+| Moving a company from Tarleaks Cloud (`tarleaks.com`, HTTPS 443) | **From 1.2.0.** Only during a [move to this server](move-from-cloud.md), then every 6 hours until the signed deletion certificate has arrived | Off: only when you run the move |
 | Government and e-invoicing services | Only when a workspace uses them | Off until set up |
 | A time server (NTP) | Before e-invoices are signed | Uses a public one unless you name yours |
 | Any other outside service | Only when a workspace switches it on | **Off** |
@@ -92,6 +93,7 @@ tell "their outage" from "our network". Leave it empty to skip that check.
 |---|---|
 | `registry.tarleaks.com` (and `tarleaks.com`, which checks the licence key for it) | The Tarleaks images, signed in with your licence key |
 | Docker Hub (`registry-1.docker.io`, `docker.io`, `production.cloudflare.docker.com`) | The database, cache, message queue, gateway, file store and helper images, and the optional diagram editor |
+| `ghcr.io`, `pkg-containers.githubusercontent.com` | Only when the server has no cosign 2.4 or later: Sigstore's cosign image, which checks the Tarleaks signature of every downloaded Tarleaks image ([config/sigstore](../config/sigstore/README.md)) |
 
 These downloads are done by Docker itself, so they follow **Docker's** proxy
 setting, not the ERP's ([requirements.md](requirements.md#network)). Without

@@ -83,14 +83,17 @@ What you need first:
   (ARM). It is a few files ending in `.tar.part-00`, `.tar.part-01` and so on,
   plus one `.images.txt` and one `.SHA256SUMS`. It holds every image the kit
   can start, the editors included: the document editor (with the Arabic
-  fonts), the proxies and, on 1.0.0, the diagram editor (Diagram Studio is not in 1.2.0). Ask info@tarleaks.com for the
+  fonts), the proxies and the diagram editor. Ask info@tarleaks.com for the
   download link, and keep the files of one bundle together in one folder.
 - A licence key made for a site without internet (see the licence step below).
 
 Then, on the server:
 
-1. Load the bundle. It checks every file first, then loads the images into
-   Docker. It needs free disk of about twice the bundle's size.
+1. Load the bundle. It checks the bundle's Tarleaks signature and every file
+   first, then loads the images into Docker. It needs free disk of about twice
+   the bundle's size, and [cosign](https://github.com/sigstore/cosign/releases)
+   2.4 or later on the server (one file; copy it over with the bundle) for the
+   signature check ([config/sigstore/README.md](../config/sigstore/README.md)).
 
    ```bash
    ./tarleaks load-bundle /media/usb/tarleaks-1.2.0-linux-amd64
@@ -119,12 +122,16 @@ image is already there.
 What `load-bundle` accepts: the folder with the downloaded `.tar.part-NN`
 files (it checks them against the `.SHA256SUMS` file next to them, joins and
 unpacks them), one joined `.tar` file, the `.tar.part-00` file, or a bundle
-folder that is already unpacked. An unpacked bundle looks like this:
+folder that is already unpacked. Whichever you give it, it first checks the
+signature of the bundle's `SHA256SUMS` (`SHA256SUMS.sigstore.json`, made with
+the Tarleaks release key) and stops if it is missing or does not verify. An
+unpacked bundle looks like this:
 
 ```text
 tarleaks-1.2.0-linux-amd64/
   images.txt        "# version: 1.2.0", "# platform: linux/amd64", then one image per line
-  SHA256SUMS        the sha256 of every file under images/ (sha256sum format)
+  SHA256SUMS        the sha256 of every file under images/ and sbom/ (sha256sum format)
+  SHA256SUMS.sigstore.json   the Tarleaks signature of SHA256SUMS
   images/*.tar      one archive per image, as docker save writes it (.tar.gz works too)
 ```
 
@@ -141,7 +148,7 @@ A closed network has none of these from the internet, so **you provide them**:
 | Your own TLS certificate, for HTTPS | Let's Encrypt cannot reach a closed network | A reverse proxy in front of the ERP: [examples/behind-nginx](../examples/behind-nginx/README.md) |
 | A map tile server (optional) | Background maps in Fleet and Attendance. Without it, positions show on a plain background | **Fleet, Settings**, Map tile server address |
 | A LiveKit server (optional) | Voice and video calls. Without it, calls are off | [configuration.md](configuration.md#calls-livekit) |
-| The editors (document, diagram) | New and Edit in Documents; drawing in the Diagrams app | They run on your own server, next to the ERP; their images (`onlyoffice`, `nginx`, and on 1.0.0 `jgraph/drawio`; Diagram Studio is not in 1.2.0) must be in the bundle or already loaded. [configuration.md](configuration.md#editors) |
+| The editors (document, diagram) | New and Edit in Documents; drawing in the Diagrams app | They run on your own server, next to the ERP; their images (`onlyoffice`, `nginx` and `jgraph/drawio`) must be in the bundle or already loaded. [configuration.md](configuration.md#editors) |
 
 **The licence step.** Today a licence still needs **one** connection to
 `tarleaks.com`: the 30-day trial is started online, and a licence key is
@@ -214,6 +221,13 @@ attachments in the bundled store), `redisdata`, `rabbitdata` and `hrdocs`.
 Yes. Your data belongs to you, and the licence lets you export it before the end of
 the term. Use each app's exports, and keep regular backups.
 
+**We work on Tarleaks Cloud today. Can we move to our own server?**
+**From 1.2.0.** Yes, the whole company in a few steps: the cloud administrator
+makes a one-time move code, one command on the new server copies everything
+encrypted to that server and checks it, and you switch over when you are
+ready. The cloud copy is destroyed afterwards and you get a signed deletion
+certificate: [move-from-cloud.md](move-from-cloud.md).
+
 **Does it start again after a reboot?**
 Yes, if Docker starts at boot (the default on Linux packages, and "Start Docker
 Desktop when you sign in" on macOS and Windows). Containers restart unless you
@@ -224,6 +238,12 @@ can stay silent after a restart of the computer: `docker compose up -d
 --force-recreate gateway` ([troubleshooting](troubleshooting.md#after-a-restart-or-a-reboot)).
 
 ## Everyday
+
+**Can I try it with sample data first?**
+**From 1.2.0**, yes: back up, then `./tarleaks sample-data load --install-packs`
+fills a new company with a fictional one, and `./tarleaks sample-data remove --yes` takes it
+out again exactly; your own records are never changed. See
+[sample-data.md](sample-data.md).
 
 **How do I see the version?**
 **Settings, Licence**, under "This installation".

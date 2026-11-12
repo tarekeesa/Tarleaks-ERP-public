@@ -23,7 +23,8 @@ Contents: [Version](#version) · [Address](#address) · [Apps](#apps) ·
 [AI features](#ai-features-optional) · [Outbound proxy](#outbound-proxy) ·
 [E-invoicing time server](#e-invoicing-time-server) ·
 [Editors](#editors) · [Calls](#calls-livekit) ·
-[Other](#other) · [Advanced](#advanced-settings-not-in-envexample)
+[Other](#other) · [Container security](#container-security) ·
+[Advanced](#advanced-settings-not-in-envexample)
 
 ## Version
 
@@ -415,15 +416,26 @@ HELPDESK_TOKEN_KEY
 SUBSCRIPTIONS_KEY_SEAL_KEY
 MARKETPLACE_TOKEN_KEY
 INSIGHTS_SOURCE_KEY
+INSIGHTS_VISITOR_HASH_KEY
 PROCUREMENT_KEK
 CONTRACTS_PROVIDER_KEY
+ACTIVITIES_INVITE_SECRET
+CORRESPONDENCE_MAILBOX_KEY
+CRM_EMAIL_TOKEN_KEY
+EINVOICE_SEAL_KEY
+PDFTOOLS_SIGN_KEY
+SOCIAL_TOKEN_KEY
+SSO_CREDENTIAL_KEY
 ONLYOFFICE_JWT_SECRET
 JWT_SIGNING_KID
 JWT_SIGNING_KEY_DER
 JWT_PUBLIC_KEYS
+LMS_PASSPORT_SIGNING_KEY_DER
+BADGE_SIGNING_KEY_DER
 ```
 
-The last three are the sign-in token key (Ed25519): its name, its private half
+`JWT_SIGNING_KID`, `JWT_SIGNING_KEY_DER` and `JWT_PUBLIC_KEYS` are the sign-in
+token key (Ed25519): its name, its private half
 (only the auth service reads it) and its public half. Two-step confirmation,
 which opening a sealed tender needs, works only with them. The installer makes
 them; an installation from an older kit gets them on its next `./tarleaks
@@ -432,6 +444,13 @@ private half also protects the keys a workspace uses to let people sign in to
 other apps with their ERP account: keep it with the other keys. A restored
 `.env` from before these lines existed gets a new key on the next start, which
 only signs everyone out once.
+
+`LMS_PASSPORT_SIGNING_KEY_DER` and `BADGE_SIGNING_KEY_DER` are the private
+halves of two more Ed25519 keys, each the app's own: learning certificates and
+passport links (LMS), and Open Badges (Gamification). The installer makes them;
+an installation from an older kit gets them on its next `./tarleaks start`.
+Empty, those apps issue no certificates or badges; everything else works. A new
+key makes the certificates and badges issued before fail their check.
 
 Back them up: they are in `.env`, which `./tarleaks backup` copies.
 
@@ -501,7 +520,6 @@ installation ships the same editors, next to the apps that use them:
 |---|---|---|---|
 | Document editor (ONLYOFFICE Document Server, `onlyoffice`) | Documents (every installation) | **New** and **Edit** in Documents, co-editing, versions; the letter and contract templates of HR | about 2 GB |
 | Diagram editor (draw.io, `drawio`) | Diagrams | Drawing and editing saved diagrams | about 0.3 GB |
-| Diagram engine (`diagrams-engine`; not in 1.2.0, where Diagram Studio is left out while it is rebuilt) | Diagrams | AI drawing: describe a diagram, get one | about 0.2 GB |
 
 They are on unless you switch them off. The installer turns them off by itself
 when Docker has less than about 5.5 GB of memory, and says so.
@@ -523,8 +541,8 @@ everything is back.
 **Where they are.** Browsers open the document editor at `<address>/onlyoffice/`
 and the diagram editor at `<address>/drawio/`: the same address as the ERP,
 through the gateway, so nothing else needs to be opened on the firewall. The
-installer writes `TARLEAKS_ONLYOFFICE_URL`, `TARLEAKS_DRAWIO_URL` and
-`TARLEAKS_DIAGRAMS_ENGINE_URL` into `.env` from `TARLEAKS_URL` on every start;
+installer writes `TARLEAKS_ONLYOFFICE_URL` and `TARLEAKS_DRAWIO_URL` into
+`.env` from `TARLEAKS_URL` on every start;
 do not edit those. Behind a reverse proxy with its own name, send both paths
 (and the editor's WebSocket) to the gateway and, only if people reach the
 editors at a different address than `TARLEAKS_URL`, set `ONLYOFFICE_PUBLIC_URL`
@@ -545,7 +563,7 @@ caches, in three Docker volumes (`onlyoffice-data`, `onlyoffice-lib`,
 `onlyoffice-db`). Your documents are in the file store, which the backup covers,
 so these volumes are not in the backup: after a restore the editor starts empty
 and rebuilds them. A document someone had open and unsaved when the machine
-stopped is lost, as in any editor. The diagram editor and the engine keep
+stopped is lost, as in any editor. The diagram editor keeps
 nothing.
 
 **AI drawing** also needs an AI provider: each company sets its own in
@@ -558,10 +576,8 @@ says that AI drawing needs an AI provider instead of offering it.
 | `TARLEAKS_EDITORS` | `on` | `on` or `off`; use `./tarleaks editors`. |
 | `ONLYOFFICE_IMAGE` | the release's `onlyoffice` image | The document editor's image (amd64 and arm64). Set it only to use your own build. |
 | `ONLYOFFICE_MEM_LIMIT` | `3g` | Memory limit of the document editor. |
-| `DRAWIO_IMAGE` | `jgraph/drawio:31.4.6` | The diagram editor's image. |
+| `DRAWIO_IMAGE` | `jgraph/drawio:31.7.0` | The diagram editor's image. |
 | `DRAWIO_MEM_LIMIT` | `1g` | Memory limit of the diagram editor. |
-| `DIAGRAMS_ENGINE_MEM_LIMIT` | `512m` | Memory limit of the diagram engine. |
-| `DIAGRAMS_MODEL_ID`, `DIAGRAMS_AI_BASE_URL` | empty, Groq | Fallback model and endpoint of the engine for a company without its own AI settings. |
 | `ONLYOFFICE_PUBLIC_URL`, `DRAWIO_URL` | empty | Only behind a proxy with its own name (above). |
 
 The document editor's image is the same one the hosted service runs: ONLYOFFICE
@@ -577,9 +593,8 @@ another one) and switches to the release's image when you upgrade to 1.2.0.
 The installer and `./tarleaks start` wait for it and say when it is ready;
 `./tarleaks doctor` checks it. With no internet, load the images first: the
 offline bundle of a release includes them ([faq.md](faq.md#can-i-install-without-internet)):
-the document editor (`onlyoffice`) and the two proxies (`nginx`), plus, on
-release 1.0.0 only, the diagram editor (`jgraph/drawio`): Diagram Studio is not
-in 1.2.0.
+the document editor (`onlyoffice`) and the two proxies (`nginx`), plus the
+diagram editor (`jgraph/drawio`) when you run Diagram Studio.
 
 ## Many people at once
 
@@ -643,6 +658,36 @@ restarting and its log ends abruptly, `docker inspect <container> --format
 system stops one of its processes and PostgreSQL reconnects everyone within
 seconds; requests running at that moment fail once.
 
+## Container security
+
+Each container gets only the rights its job needs, so a flaw in one program
+cannot take over the machine or change the ERP.
+
+- **The ERP's own containers** (every app, its `<app>-jobs` container and the
+  update steps) run as an ordinary user (uid `10001`), never as root. Their
+  program files are read-only. They have no Linux capabilities. No program in
+  them can gain rights (`no-new-privileges`). They write only to `/tmp`, in
+  memory and emptied at every restart, and to their volumes. Backups, restores
+  and PDF tools keep their working files on disk instead, in the volumes
+  `scratch-auth` and `scratch-pdftools`. Those volumes are not part of the backup.
+- **The database, cache, message queue and web servers** start as root only to
+  hand their data folder to their own user, then switch to it. They keep the
+  five capabilities that step needs and no others.
+- **The gateway** keeps one capability: opening ports 80 and 443. **The sign-in
+  proxy** runs as nginx's own user. The file store and the one-off set-up steps
+  run with no capabilities and no network, where they need none.
+- **The document editor** (ONLYOFFICE) keeps its capabilities: it sets itself up
+  as root. No program in it can gain more.
+- Every start, a one-off step (`volume-owner`) gives the HR documents volume to
+  the ERP's user. Installations from before 1.2.0 wrote it as root.
+
+| Variable | Default | What it does |
+|---|---|---|
+| `TARLEAKS_RUN_AS` | `10001:10001` | The user and group the ERP's containers run as. `0:0` runs them as root again (`./tarleaks restart` applies it, and the HR documents volume follows). Root here still has no Linux capabilities and a read-only system, so it fixes a file-ownership problem, not one that needs extra rights. Use it only while a problem is being fixed, and tell us. |
+| `SERVICE_TMP_SIZE` | `256m` | The largest `/tmp` of each ERP container. It is in memory and counts towards the container's memory limit. |
+
+Neither is in `.env.example`. Add the line to `.env` when you need it.
+
 ## Scheduled jobs
 
 Work that runs on a clock (SLA deadlines, recurring invoices, scheduled reports,
@@ -690,13 +735,13 @@ installation without internet, load that image yourself (`docker load`).
 | Variable | Default | What it does |
 |---|---|---|
 | `POSTGRES_IMAGE` | `pgvector/pgvector:0.8.7-pg16` | Database image. Must be PostgreSQL 16 with pgvector. |
-| `REDIS_IMAGE` | `redis:7.4.7-alpine` | Cache image. |
+| `REDIS_IMAGE` | `redis:7.4.12-alpine` | Cache image. |
 | `RABBITMQ_IMAGE` | `rabbitmq:3.13.7-management-alpine` | Message queue image. |
-| `CURL_IMAGE` | `curlimages/curl:8.17.0` | Small helper image for first-start tasks. |
-| `OBJECTS_IMAGE` | `versity/versitygw:v1.8.0` | Bundled file store image. |
-| `TRAEFIK_IMAGE` | `traefik:v3.7.14` | Gateway image. It runs with its version check and usage statistics switched off. |
+| `CURL_IMAGE` | `curlimages/curl:8.23.0` | Small helper image for first-start tasks. |
+| `OBJECTS_IMAGE` | `versity/versitygw:v1.10.0` | Bundled file store image. |
+| `TRAEFIK_IMAGE` | `traefik:v3.7.17` | Gateway image. It runs with its version check and usage statistics switched off. |
 | `ALPINE_IMAGE` | `alpine:3.22.6` | Small helper image: prepares the file store. (`./tarleaks backup` and `restore` use the database image.) |
-| `DRAWIO_IMAGE` | `jgraph/drawio:31.4.6` | The diagram editor ([above](#editors)). |
+| `DRAWIO_IMAGE` | `jgraph/drawio:31.7.0` | The diagram editor ([above](#editors)). |
 | `ONLYOFFICE_IMAGE` | the release's `onlyoffice` image | The document editor ([above](#editors)). |
 | `AUTHPROXY_IMAGE` | `nginx:1.30.6-alpine` | The sign-in check proxy and the document editor's proxy ([above](#many-people-at-once)). |
 | `PG_SHM_SIZE` | `256mb` | Shared memory for the database container. |

@@ -30,7 +30,11 @@ function Get-RegistryEnvValue([string] $Key) {
   $f = Get-RegistryEnvFile
   if (-not (Test-Path $f)) { return '' }
   $l = Get-Content $f | Where-Object { $_ -match "^$([regex]::Escape($Key))=" } | Select-Object -Last 1
-  if ($l) { return $l.Substring($Key.Length + 1) } else { return '' }
+  if (-not $l) { return '' }
+  # As docker compose reads it: no carriage return, no surrounding quotes.
+  $v = $l.Substring($Key.Length + 1).TrimEnd("`r")
+  if ($v.Length -ge 2 -and (($v[0] -eq '"' -and $v[-1] -eq '"') -or ($v[0] -eq "'" -and $v[-1] -eq "'"))) { $v = $v.Substring(1, $v.Length - 2) }
+  return $v
 }
 
 function Set-RegistryEnvValue([string] $Key, [string] $Value) {

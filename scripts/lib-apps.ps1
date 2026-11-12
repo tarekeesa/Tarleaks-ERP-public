@@ -6,6 +6,8 @@
 
 # Signing in to the image registry with the licence key (Invoke-AppPull does it).
 . (Join-Path $PSScriptRoot 'lib-registry.ps1')
+# Checking the Tarleaks signature of what was downloaded (Invoke-AppPull does it).
+. (Join-Path $PSScriptRoot 'lib-signature.ps1')
 
 $script:AppsSheet = Join-Path (Split-Path $PSScriptRoot -Parent) 'config/apps.tsv'
 if (-not (Test-Path $script:AppsSheet)) { $script:AppsSheet = Join-Path $PSScriptRoot 'config/apps.tsv' }
@@ -243,7 +245,7 @@ function Get-AppMissingImage {
 }
 
 # The editors (rows of kind addon in config\apps.tsv): the document editor of
-# Documents, the diagram editor and the AI engine of Diagrams. They run next to
+# Documents and the diagram editor of Diagrams. They run next to
 # the apps that use them. TARLEAKS_EDITORS=off in .env (.\tarleaks.ps1 editors
 # off) switches them all off; an editor whose image is newer than the release
 # (config\app-releases.tsv) is left out.
@@ -277,17 +279,16 @@ function Get-AppAddon([string] $Closure) {
   if ($u) { return ',' + $u } else { return '' }
 }
 
-# Where the editors answer, as .env keys: the address people's browsers use, and
-# the AI engine's address inside Docker. Empty means "no such editor here",
+# Where the editors answer, as .env keys: the address people's browsers use.
+# Empty means "no such editor here",
 # which the apps then say plainly. Recomputed on every start, so a changed
 # TARLEAKS_URL is followed.
 function Get-AppEditorSetting([string] $Closure, [string] $BaseUrl) {
   $u = @(Split-AppList (Get-AppAddonUnit $Closure))
   $b = $BaseUrl.TrimEnd('/')
-  $office = ''; $draw = ''; $engine = ''
+  $office = ''; $draw = ''
   if ($u -contains 'onlyoffice') { $office = "$b/onlyoffice" }
   if ($u -contains 'drawio') { $draw = "$b/drawio/" }
-  if ($u -contains 'diagrams-engine') { $engine = 'http://diagrams-engine:8023' }
   # The document editor's image: the release's own (Arabic fonts) from 1.2.0; a
   # release before that has none, so it keeps the stock Document Server.
   $officeImage = ''
@@ -296,8 +297,16 @@ function Get-AppEditorSetting([string] $Closure, [string] $BaseUrl) {
     TARLEAKS_ONLYOFFICE_IMAGE = $officeImage
     TARLEAKS_ONLYOFFICE_URL = $office
     TARLEAKS_DRAWIO_URL = $draw
-    TARLEAKS_DIAGRAMS_ENGINE_URL = $engine
   }
+}
+
+# The last thing Docker said about a failed pull, on one line (no secrets: Docker
+# prints image names, addresses and the error, never a password).
+function Get-AppPullReason($Out) {
+  $last = @($Out | ForEach-Object { "$_" -split "`r?`n" } | Where-Object { $_.Trim() }) | Select-Object -Last 1
+  $t = ("$last" -replace '\s+', ' ').Trim()
+  if ($t.Length -gt 300) { $t = $t.Substring(0, 300) }
+  return $t
 }
 
 # Download the images for the services that will run, and turn the usual
@@ -309,7 +318,8 @@ function Invoke-AppPull([string] $Again) {
     Write-Host 'Offline: using the images already on this computer (no download).'
     $missing = Get-AppMissingImage
     if ($null -eq $missing) { Write-Host '  [x]  Could not read the list of images from docker-compose.yml.' -ForegroundColor Red; return $false }
-    if ($missing.Count -eq 0) { return $true }
+    # Images already here run only when this computer checked their signature (a signed bundle, an earlier download).
+    if ($missing.Count -eq 0) { return (Confirm-ReleaseVerified $Again) }
     Write-Host 'Not on this computer:'
     $missing | ForEach-Object { Write-Host "  $_" }
     Write-Host "  [x]  Load the offline bundle for this release first (.\tarleaks.ps1 load-bundle <folder>), then run $Again -Offline again. See docs\faq.md, `"Can I install without internet?`"" -ForegroundColor Red
@@ -322,17 +332,32 @@ function Invoke-AppPull([string] $Again) {
   # refused key says why before anything is downloaded.
   if (-not (Invoke-RegistryLogin $Again)) {
     $missing = Get-AppMissingImage
-    if ($null -ne $missing -and $missing.Count -eq 0) { Write-Host '  [!]  Carrying on with the images already on this computer.' -ForegroundColor Yellow; return $true }
+    if ($null -ne $missing -and $missing.Count -eq 0) { Write-Host '  [!]  Carrying on with the images already on this computer.' -ForegroundColor Yellow; return (Confirm-ReleaseVerified $Again) }
     return $false
   }
-  $out = docker compose pull --quiet 2>&1
-  if ($LASTEXITCODE -eq 0) { return $true }
+  # A dropped connection halfway through a download (a reset, a timeout, an
+  # unexpected EOF from the registry or Docker Hub) is usually gone a few
+  # seconds later, and Docker keeps the layers it already has: try again twice
+  # before giving up. Refusals (licence, missing release, disk) are not retried.
+  $tries = if ($env:TARLEAKS_PULL_TRIES) { [int]$env:TARLEAKS_PULL_TRIES } else { 3 }
+  $wait = if ($env:TARLEAKS_PULL_WAIT) { [int]$env:TARLEAKS_PULL_WAIT } else { 10 }
+  for ($try = 1; ; $try++) {
+    $out = docker compose pull --quiet 2>&1
+    # Downloaded: run nothing that Tarleaks did not sign (scripts\lib-signature.ps1).
+    if ($LASTEXITCODE -eq 0) { return (Confirm-ReleaseImage $Again) }
+    $text = "$out"
+    $refused = $text -match 'unauthorized|denied|authentication required|manifest unknown|not found|no matching manifest|does not match the specified platform|no space left on device|x509|certificate|toomanyrequests|rate limit'
+    $dropped = $text -match 'timeout|timed out|dial tcp|no such host|connection refused|connection reset|network is unreachable|EOF|TLS handshake|broken pipe|503 Service Unavailable|502 Bad Gateway'
+    if ($try -ge $tries -or $refused -or -not $dropped) { break }
+    Write-Host "  [!]  The download was interrupted ($(Get-AppPullReason $out)). Trying again in $wait seconds; what is already downloaded is kept." -ForegroundColor Yellow
+    Start-Sleep -Seconds $wait
+  }
   # The download failed, but every image may already be here (an offline
   # bundle was loaded): carry on with those.
   $missing = Get-AppMissingImage
   if ($null -ne $missing -and $missing.Count -eq 0) {
     Write-Host '  [!]  The download failed, but every image is already on this computer. Carrying on with those.' -ForegroundColor Yellow
-    return $true
+    return (Confirm-ReleaseVerified $Again)
   }
   $log = "$out"
   $version = ''
@@ -355,6 +380,7 @@ function Invoke-AppPull([string] $Again) {
   } elseif ($log -match 'x509|certificate') {
     "A certificate was not accepted while downloading: a proxy is probably inspecting HTTPS. Ask your network team to exempt $regHost and Docker Hub, or set Docker Desktop's proxy (Settings, Resources, Proxies), then run $Again again."
   } elseif ($log -match 'timeout|dial tcp|no such host|connection refused|network is unreachable|EOF') {
+    Write-Host "  Docker said: $(Get-AppPullReason $out)"
     "The computer could not reach the image registries. Allow outbound HTTPS to $regHost, tarleaks.com, registry-1.docker.io and production.cloudflare.docker.com, then run $Again again."
   } else {
     Write-Host $log

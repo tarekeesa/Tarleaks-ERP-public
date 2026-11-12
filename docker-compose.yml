@@ -14,7 +14,6 @@
 # (switch them with ./tarleaks editors on|off):
 #   ,onlyoffice        the document editor: New, Edit and versions in Documents
 #   ,drawio            the diagram editor of the Diagrams app
-#   ,diagrams-engine   the engine behind the Diagrams app's AI drawing
 #
 # Every image is published for linux/amd64 and linux/arm64. Without internet,
 # load the offline bundle first: ./tarleaks load-bundle <folder>.
@@ -42,6 +41,9 @@ x-env: &env
   ROOT_DOMAIN: ${TARLEAKS_HOST:-localhost}
   ROOT_DOMAINS: ${TARLEAKS_HOST:-localhost}
   PUBLIC_BASE_URL: ${TARLEAKS_URL:-http://localhost}
+  # The same address under the name some apps read for the links they put in
+  # e-mails (invitations, the customer portal, the online store).
+  PUBLIC_URL: ${TARLEAKS_URL:-http://localhost}
   DEPLOYMENT_MODE: onprem
   # Both names: images pinned before the rename read only NEXUS_*.
   TARLEAKS_DEPLOYMENT: self-hosted
@@ -49,6 +51,15 @@ x-env: &env
   STRICT_TENANT_URL_ISOLATION: "false"
   AUTO_PROVISION_TENANT_DB: "true"
   INTERNAL_DMS_HR_TOKEN: ${INTERNAL_TOKEN:?INTERNAL_TOKEN is not set - run ./install.sh}
+  # The internal service key: every app that calls another app on its internal
+  # routes (no sign-in) sends it, and every app that answers one checks it; an
+  # app without it is refused (403) or refuses (503). One value for all.
+  INTERNAL_API_TOKEN_SECRET: ${INTERNAL_TOKEN:?INTERNAL_TOKEN is not set - run ./install.sh}
+  # The shared sealing key (shared::crypto's default): saved connection
+  # credentials (Finance's FTA connection, Settings > Integrations, signing
+  # certificates' passphrases in Correspondence, and others). Never change it:
+  # what it sealed cannot be read without it.
+  SOCIAL_TOKEN_KEY: ${SOCIAL_TOKEN_KEY:?SOCIAL_TOKEN_KEY is not set - run ./install.sh}
   PORTAL_JWT_SECRET: ${PORTAL_JWT_SECRET:?PORTAL_JWT_SECRET is not set - run ./install.sh}
   NOTIFICATIONS_KEK: ${NOTIFICATIONS_KEK:?NOTIFICATIONS_KEK is not set - run ./install.sh}
   NOTIFICATIONS_UNSUB_SECRET: ${NOTIFICATIONS_UNSUB_SECRET:?NOTIFICATIONS_UNSUB_SECRET is not set - run ./install.sh}
@@ -111,13 +122,35 @@ x-env: &env
   # NO_PROXY in .env adds to this list (a mail relay, a NAS, your LAN).
   NO_PROXY: &no_proxy "localhost,127.0.0.1,::1,${TARLEAKS_HOST:-localhost},\
     postgres,redis,rabbitmq,objects,gateway,authproxy,web,drawio,onlyoffice,\
-    onlyoffice-proxy,diagrams-engine,auth,migrate,hr,\
+    onlyoffice-proxy,auth,migrate,hr,\
     attendance,payroll,accounting,activities,notifications,documents,reports,\
     parties,crm,inventory,sales_orders,chat,project_management,lms,\
     gamification,assets,helpdesk,fleet,correspondence,insights,ecommerce,pos,\
     rental,procurement,construction,contracts,subscriptions,pdftools,diagrams,\
     imtithal,iso42001${NO_PROXY:+,${NO_PROXY:-}}"
   no_proxy: *no_proxy
+
+# How every ERP container runs (docs/configuration.md#container-security):
+# as an ordinary user (uid 10001), never root; with no Linux capabilities; its
+# programs cannot gain privileges; and its own files cannot be changed, so a
+# break-in cannot alter the program or leave anything behind. It writes only to
+# /tmp (in memory, emptied at every restart) and to its named volumes.
+# TARLEAKS_RUN_AS=0:0 in .env runs them as root again, if a problem needs it.
+x-hardened: &hardened
+  user: ${TARLEAKS_RUN_AS:-10001:10001}
+  read_only: true
+  tmpfs:
+    - /tmp:size=${SERVICE_TMP_SIZE:-256m},mode=1777
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+
+# The third-party images whose start script runs as root only to hand the data
+# folder to the image's own user and then switch to it (PostgreSQL, Redis,
+# RabbitMQ, nginx): the capabilities that step needs, and nothing else.
+x-root-start: &root-start
+  cap_drop: [ALL]
+  cap_add: [CHOWN, DAC_OVERRIDE, FOWNER, SETGID, SETUID]
+  security_opt: [no-new-privileges:true]
 
 # One ERP service: pre-built image, waits for its infrastructure.
 #
@@ -127,6 +160,7 @@ x-env: &env
 # management port answers only once the broker has fully started), at most 5
 # minutes, then runs the image's own entrypoint (/app/entrypoint).
 x-service: &service
+  <<: *hardened
   restart: unless-stopped
   logging: *logging
   depends_on:
@@ -164,6 +198,7 @@ x-service: &service
 # jobs as <every>:<subcommand>. Same profile as its app, so it runs only when
 # the app does. JOBS_START_DELAY and JOBS_TIMEOUT in .env tune them.
 x-jobs: &jobs
+  <<: *hardened
   restart: unless-stopped
   logging: *logging
   init: true
@@ -182,6 +217,7 @@ services:
   # private repository too: that list fills the offline bundle.
   # ---------------------------------------------------------------------------
   postgres:
+    <<: *root-start
     image: ${POSTGRES_IMAGE:-pgvector/pgvector:0.8.7-pg16}
     restart: unless-stopped
     logging: *logging
@@ -237,6 +273,11 @@ services:
   # template1, which a new workspace database is copied from (without them
   # setup "succeeded" but most apps never worked). Idempotent, takes a second.
   postgres-prepare:
+    # Only runs psql: as the image's own user, with nothing it could change.
+    user: postgres
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
     image: ${POSTGRES_IMAGE:-pgvector/pgvector:0.8.7-pg16}
     restart: "no"
     logging: *logging
@@ -270,7 +311,8 @@ services:
         echo 'database extensions ready'
 
   redis:
-    image: ${REDIS_IMAGE:-redis:7.4.7-alpine}
+    <<: *root-start
+    image: ${REDIS_IMAGE:-redis:7.4.12-alpine}
     restart: unless-stopped
     logging: *logging
     command: ["redis-server", "--appendonly", "yes", "--save", "300", "10"]
@@ -284,6 +326,7 @@ services:
       retries: 30
 
   rabbitmq:
+    <<: *root-start
     image: ${RABBITMQ_IMAGE:-rabbitmq:3.13.7-management-alpine}
     restart: unless-stopped
     logging: *logging
@@ -311,7 +354,10 @@ services:
   # queues of services this kit does not ship (social, meet), which older kits
   # declared: nothing ever read them, so they only filled up.
   rabbitmq-init:
-    image: ${CURL_IMAGE:-curlimages/curl:8.17.0}
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    image: ${CURL_IMAGE:-curlimages/curl:8.23.0}
     restart: "no"
     logging: *logging
     depends_on:
@@ -340,7 +386,12 @@ services:
   # through the gateway; set TARLEAKS_STORAGE_* in .env to use AWS S3, Cloudflare
   # R2, Wasabi or a NAS instead (see docs/configuration.md).
   objects:
-    image: ${OBJECTS_IMAGE:-versity/versitygw:v1.8.0}
+    read_only: true
+    tmpfs:
+      - /tmp:size=256m,mode=1777
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    image: ${OBJECTS_IMAGE:-versity/versitygw:v1.10.0}
     restart: unless-stopped
     logging: *logging
     environment:
@@ -357,11 +408,41 @@ services:
   objects-init:
     image: ${ALPINE_IMAGE:-alpine:3.22.6}
     restart: "no"
+    # Root because the file store (versitygw) runs as root and owns the
+    # folder; with no capabilities, no network and nothing else it can change.
     user: "0:0"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    network_mode: none
     logging: *logging
     entrypoint: ["sh", "-c", "mkdir -p /data/${STORAGE_BUCKET:-tarleaks-files} && echo 'file store ready'"]
     volumes:
       - files:/data
+
+  # Every start: the HR documents folder (volume hrdocs) belongs to the user
+  # the ERP runs as (TARLEAKS_RUN_AS). Installations from before 1.2.0 wrote it
+  # as root. Changes only what is not already owned; takes a second.
+  volume-owner:
+    image: ${ALPINE_IMAGE:-alpine:3.22.6}
+    restart: "no"
+    user: "0:0"
+    read_only: true
+    cap_drop: [ALL]
+    cap_add: [CHOWN, DAC_READ_SEARCH]
+    security_opt: [no-new-privileges:true]
+    network_mode: none
+    logging: *logging
+    environment:
+      RUN_AS: ${TARLEAKS_RUN_AS:-10001:10001}
+    entrypoint: ["sh", "-c"]
+    command:
+      - >-
+        find /vol/hrdocs \( ! -user "$${RUN_AS%%:*}" -o ! -group "$${RUN_AS##*:}" \)
+        -exec chown -h "$$RUN_AS" {} +
+        && echo "the HR documents folder belongs to $$RUN_AS"
+    volumes:
+      - hrdocs:/vol/hrdocs
 
   # Not a service: the tool `./tarleaks backup` and `restore` run (with
   # `docker compose run`) to copy the `files` and `hrdocs` volumes. Compose
@@ -370,6 +451,11 @@ services:
   # ETag, checksums, kept in extended attributes). Its profile keeps it out of
   # `up`; no network.
   toolbox:
+    # Root, to read and restore every file of the volumes with its owner and
+    # metadata, and to hand the archive to you (HOST_ID): those capabilities only.
+    cap_drop: [ALL]
+    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER]
+    security_opt: [no-new-privileges:true]
     image: ${POSTGRES_IMAGE:-pgvector/pgvector:0.8.7-pg16}
     profiles: [tools]
     restart: "no"
@@ -381,15 +467,21 @@ services:
       - hrdocs:/vol/hrdocs
 
   gateway:
-    image: ${TRAEFIK_IMAGE:-traefik:v3.7.14}
+    read_only: true
+    cap_drop: [ALL]
+    cap_add: [NET_BIND_SERVICE]
+    security_opt: [no-new-privileges:true]
+    image: ${TRAEFIK_IMAGE:-traefik:v3.7.17}
     restart: unless-stopped
     logging: *logging
     command:
       - --providers.file.directory=/etc/traefik/dynamic
       - --providers.file.watch=true
       - --entrypoints.web.address=:80
-      - --entrypoints.web.transport.respondingTimeouts.readTimeout=300s
-      - --entrypoints.web.transport.respondingTimeouts.writeTimeout=300s
+      # The same budget as the services' long requests (first-run setup prepares the workspace in
+      # one request): one setting, HTTP_LONG_REQUEST_TIMEOUT_SECS, raises both on a slow disk.
+      - --entrypoints.web.transport.respondingTimeouts.readTimeout=${HTTP_LONG_REQUEST_TIMEOUT_SECS:-300}s
+      - --entrypoints.web.transport.respondingTimeouts.writeTimeout=${HTTP_LONG_REQUEST_TIMEOUT_SECS:-300}s
       - --ping=true
       - --log.level=${GATEWAY_LOG_LEVEL:-WARN}
       - --accesslog=${GATEWAY_ACCESS_LOG:-false}
@@ -425,6 +517,13 @@ services:
   # the sign-in service instead of opening and closing one per request.
   # config/authproxy/nginx.conf; docs/configuration.md#many-people-at-once.
   authproxy:
+    # nginx's own user; config/authproxy/nginx.conf keeps its pid and buffers in /tmp.
+    user: "101:101"
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
     image: ${AUTHPROXY_IMAGE:-nginx:1.30.6-alpine}
     restart: unless-stopped
     logging: *logging
@@ -443,6 +542,9 @@ services:
   # Tarleaks ERP — core (always on)
   # ---------------------------------------------------------------------------
   web:
+    # nginx starts as root and serves as its own user; it writes the editor
+    # addresses into its pages at start (runtime-config.json), so its files stay writable.
+    <<: *root-start
     image: ${TARLEAKS_REGISTRY:-registry.tarleaks.com/tarleaks-erp}/web:${TARLEAKS_VERSION:?TARLEAKS_VERSION is not set}
     restart: unless-stopped
     logging: *logging
@@ -455,7 +557,11 @@ services:
 
   auth:
     <<: *service
+    # Backups and restores are written here first: on disk, not in memory.
+    tmpfs: []
     image: ${TARLEAKS_REGISTRY:-registry.tarleaks.com/tarleaks-erp}/auth:${TARLEAKS_VERSION:?TARLEAKS_VERSION is not set}
+    volumes:
+      - scratch-auth:/tmp
     depends_on:
       postgres: { condition: service_healthy }
       postgres-prepare: { condition: service_completed_successfully }
@@ -476,6 +582,13 @@ services:
       # (Compose allows no line break inside ${…}: without the key this is
       # blank lines, which nothing reads.)
       JWT_SIGNING_KEY: "${JWT_SIGNING_KEY_DER:+-----BEGIN PRIVATE KEY-----}\n${JWT_SIGNING_KEY_DER:-}\n${JWT_SIGNING_KEY_DER:+-----END PRIVATE KEY-----}\n"
+      # Seals the single sign-on (Microsoft Entra) client secrets a workspace
+      # saves. Secrets saved before it existed still open.
+      SSO_CREDENTIAL_KEY: ${SSO_CREDENTIAL_KEY:?SSO_CREDENTIAL_KEY is not set - run ./install.sh}
+      # The PDF tools signing key: the sample company's invented signing
+      # certificates are sealed with it when the sample loads, so the PDF tools
+      # app can open them. The same value the pdftools service reads.
+      PDFTOOLS_SIGN_KEY: ${PDFTOOLS_SIGN_KEY:?PDFTOOLS_SIGN_KEY is not set - run ./install.sh}
       # Where this installation creates its workspace database.
       BOOTSTRAP_CLUSTER_DSNS: '{"local":{"kind":"shared","dsn":"postgres://${POSTGRES_USER:-tarleaks}:${POSTGRES_PASSWORD}@postgres:5432/postgres","capacity_max":10}}'
       # Each key is passed under both names: images pinned before the rename
@@ -509,7 +622,12 @@ services:
   # Signed-in sessions that ended are cleared hourly; security events older than 180 days daily; from 1.2.0 the app's own nightly company backups (backup-tick, left out by older releases).
   auth-jobs:
     <<: *jobs
+    # Backups and restores are written here first: on disk, not in memory.
+    tmpfs: []
     image: ${TARLEAKS_REGISTRY:-registry.tarleaks.com/tarleaks-erp}/auth:${TARLEAKS_VERSION:?TARLEAKS_VERSION is not set}
+    volumes:
+      - ./config/jobs:/jobs:ro
+      - scratch-auth:/tmp
     depends_on:
       auth: { condition: service_healthy }
     environment: *auth-env
@@ -519,11 +637,16 @@ services:
   # Its image was nexus-migrate up to 1.1.x and is tarleaks-migrate from 1.2.0;
   # ./tarleaks and the installers set TARLEAKS_MIGRATE_IMAGE from the version.
   migrate:
+    <<: *hardened
+    # Its working files (a cloud backup, a move from the cloud) on disk, not in memory.
+    tmpfs: []
     image: ${TARLEAKS_REGISTRY:-registry.tarleaks.com/tarleaks-erp}/${TARLEAKS_MIGRATE_IMAGE:-tarleaks-migrate}:${TARLEAKS_VERSION:?TARLEAKS_VERSION is not set}
     restart: "no"
     logging: *logging
     depends_on:
       auth: { condition: service_healthy }
+    volumes:
+      - scratch-auth:/tmp
     extra_hosts:
       - "host.docker.internal:host-gateway"
     environment:
@@ -534,6 +657,11 @@ services:
   hr:
     <<: *service
     profiles: [hr]
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      rabbitmq-init: { condition: service_completed_successfully }
+      volume-owner: { condition: service_completed_successfully }
     image: ${TARLEAKS_REGISTRY:-registry.tarleaks.com/tarleaks-erp}/hr:${TARLEAKS_VERSION:?TARLEAKS_VERSION is not set}
     environment: &hr-env
       <<: *env
@@ -555,6 +683,7 @@ services:
     image: ${TARLEAKS_REGISTRY:-registry.tarleaks.com/tarleaks-erp}/hr:${TARLEAKS_VERSION:?TARLEAKS_VERSION is not set}
     depends_on:
       hr: { condition: service_started }
+      volume-owner: { condition: service_completed_successfully }
     environment: *hr-env
     volumes:
       - ./config/jobs:/jobs:ro
@@ -611,6 +740,9 @@ services:
       # (empty = no such check). docs/network.md
       EINVOICE_NTP_SERVER: ${EINVOICE_NTP_SERVER:-}
       EINVOICE_PROBE_URL: ${EINVOICE_PROBE_URL:-}
+      # Seals the e-invoicing credentials (ZATCA units, provider connections).
+      # Never change it: saved credentials cannot be read without it.
+      EINVOICE_SEAL_KEY: ${EINVOICE_SEAL_KEY:?EINVOICE_SEAL_KEY is not set - run ./install.sh}
       DATABASE_URL: "postgres://${POSTGRES_USER:-tarleaks}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-tarleaks}?options=-csearch_path%3Daccounting,public"
 
   # Scheduled financial reports and the anomaly scan, daily.
@@ -628,6 +760,8 @@ services:
     image: ${TARLEAKS_REGISTRY:-registry.tarleaks.com/tarleaks-erp}/activities:${TARLEAKS_VERSION:?TARLEAKS_VERSION is not set}
     environment: &activities-env
       <<: *env
+      # Signs the Accept and Decline links in meeting invitations.
+      ACTIVITIES_INVITE_SECRET: ${ACTIVITIES_INVITE_SECRET:?ACTIVITIES_INVITE_SECRET is not set - run ./install.sh}
       DATABASE_URL: "postgres://${POSTGRES_USER:-tarleaks}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-tarleaks}?options=-csearch_path%3Dactivities,public"
 
   # Reminders and due activities, every 5 minutes.
@@ -644,10 +778,17 @@ services:
     image: ${TARLEAKS_REGISTRY:-registry.tarleaks.com/tarleaks-erp}/notifications:${TARLEAKS_VERSION:?TARLEAKS_VERSION is not set}
     environment:
       <<: *env
+      # The alert webhook answers only callers that send the internal service
+      # key; without it, anyone who reaches it could send alert e-mails.
+      ALERT_WEBHOOK_TOKEN: ${INTERNAL_TOKEN:?INTERNAL_TOKEN is not set - run ./install.sh}
       DATABASE_URL: "postgres://${POSTGRES_USER:-tarleaks}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-tarleaks}?options=-csearch_path%3Dnotifications,public"
 
   documents:
     <<: *service
+    tmpfs:
+      - /tmp:size=${SERVICE_TMP_SIZE:-256m},mode=1777
+      # The fonts a company uploaded, copied here for the document editor at start.
+      - /var/dms-fonts:size=256m,mode=1777
     image: ${TARLEAKS_REGISTRY:-registry.tarleaks.com/tarleaks-erp}/documents:${TARLEAKS_VERSION:?TARLEAKS_VERSION is not set}
     environment: &documents-env
       <<: *env
@@ -708,6 +849,7 @@ services:
   # customer, quote or order answered 500 although it was saved (and a retry
   # saved it twice). Production runs the same step before the service.
   parties-migrate:
+    <<: *hardened
     image: ${TARLEAKS_REGISTRY:-registry.tarleaks.com/tarleaks-erp}/parties:${TARLEAKS_VERSION:?TARLEAKS_VERSION is not set}
     restart: "no"
     logging: *logging
@@ -727,6 +869,8 @@ services:
     image: ${TARLEAKS_REGISTRY:-registry.tarleaks.com/tarleaks-erp}/crm:${TARLEAKS_VERSION:?TARLEAKS_VERSION is not set}
     environment: &crm-env
       <<: *env
+      # Seals the passwords and sign-in codes of mailboxes connected in CRM.
+      CRM_EMAIL_TOKEN_KEY: ${CRM_EMAIL_TOKEN_KEY:?CRM_EMAIL_TOKEN_KEY is not set - run ./install.sh}
       DATABASE_URL: "postgres://${POSTGRES_USER:-tarleaks}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-tarleaks}?options=-csearch_path%3Dcrm,public"
 
   # Applies crm's database updates to the platform database, then exits; the
@@ -734,6 +878,7 @@ services:
   # customer, quote or order answered 500 although it was saved (and a retry
   # saved it twice). Production runs the same step before the service.
   crm-migrate:
+    <<: *hardened
     profiles: [crm]
     image: ${TARLEAKS_REGISTRY:-registry.tarleaks.com/tarleaks-erp}/crm:${TARLEAKS_VERSION:?TARLEAKS_VERSION is not set}
     restart: "no"
@@ -769,6 +914,7 @@ services:
   # customer, quote or order answered 500 although it was saved (and a retry
   # saved it twice). Production runs the same step before the service.
   sales_orders-migrate:
+    <<: *hardened
     profiles: [sales_orders]
     image: ${TARLEAKS_REGISTRY:-registry.tarleaks.com/tarleaks-erp}/sales_orders:${TARLEAKS_VERSION:?TARLEAKS_VERSION is not set}
     restart: "no"
@@ -820,6 +966,10 @@ services:
     image: ${TARLEAKS_REGISTRY:-registry.tarleaks.com/tarleaks-erp}/lms:${TARLEAKS_VERSION:?TARLEAKS_VERSION is not set}
     environment:
       <<: *env
+      # Signs learning certificates and passport links (Ed25519, base64 PKCS#8
+      # from .env). Empty until the installer could make it: issuing a
+      # certificate then answers "not set up yet" and nothing is issued.
+      LMS_PASSPORT_SIGNING_KEY: ${LMS_PASSPORT_SIGNING_KEY_DER:-}
       DATABASE_URL: "postgres://${POSTGRES_USER:-tarleaks}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-tarleaks}?options=-csearch_path%3Dlms,public"
 
   gamification:
@@ -828,6 +978,9 @@ services:
     image: ${TARLEAKS_REGISTRY:-registry.tarleaks.com/tarleaks-erp}/gamification:${TARLEAKS_VERSION:?TARLEAKS_VERSION is not set}
     environment:
       <<: *env
+      # Signs Open Badges (Ed25519): the key from .env in PEM lines. Without it
+      # this is blank lines and badges are refused; nothing else is affected.
+      BADGE_SIGNING_KEY: "${BADGE_SIGNING_KEY_DER:+-----BEGIN PRIVATE KEY-----}\n${BADGE_SIGNING_KEY_DER:-}\n${BADGE_SIGNING_KEY_DER:+-----END PRIVATE KEY-----}\n"
       DATABASE_URL: "postgres://${POSTGRES_USER:-tarleaks}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-tarleaks}?options=-csearch_path%3Dgamification,public"
 
   assets:
@@ -881,6 +1034,9 @@ services:
     image: ${TARLEAKS_REGISTRY:-registry.tarleaks.com/tarleaks-erp}/correspondence:${TARLEAKS_VERSION:?TARLEAKS_VERSION is not set}
     environment: &correspondence-env
       <<: *env
+      # Seals the passwords of the mailboxes incoming mail is read from. Never
+      # change it: saved passwords cannot be read without it.
+      CORRESPONDENCE_MAILBOX_KEY: ${CORRESPONDENCE_MAILBOX_KEY:?CORRESPONDENCE_MAILBOX_KEY is not set - run ./install.sh}
       DATABASE_URL: "postgres://${POSTGRES_USER:-tarleaks}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-tarleaks}?options=-csearch_path%3Dcorrespondence,public"
 
   # Reply deadlines and delegations hourly; retention and the import gate daily.
@@ -898,6 +1054,9 @@ services:
     image: ${TARLEAKS_REGISTRY:-registry.tarleaks.com/tarleaks-erp}/insights:${TARLEAKS_VERSION:?TARLEAKS_VERSION is not set}
     environment: &insights-env
       <<: *env
+      # Keys how visitors of shared dashboard links are recorded, so the record
+      # cannot be traced back to their address.
+      INSIGHTS_VISITOR_HASH_KEY: ${INSIGHTS_VISITOR_HASH_KEY:?INSIGHTS_VISITOR_HASH_KEY is not set - run ./install.sh}
       HTTP_REQUEST_TIMEOUT_SECS: ${HTTP_LONG_REQUEST_TIMEOUT_SECS:-300}
       DATABASE_URL: "postgres://${POSTGRES_USER:-tarleaks}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-tarleaks}?options=-csearch_path%3Dinsights,public"
 
@@ -956,6 +1115,10 @@ services:
       # RFQs not yet opened cannot be opened without it. Keep a copy of .env.
       PROCUREMENT_KEK: ${PROCUREMENT_KEK:?PROCUREMENT_KEK is not set - run ./install.sh}
       PROCUREMENT_KEK_VERSION: ${PROCUREMENT_KEK_VERSION:-v1}
+      # Only while changing the key above: the old key and its version label,
+      # so bids sealed with it still open. Both or neither; empty normally.
+      PROCUREMENT_KEK_PREVIOUS: ${PROCUREMENT_KEK_PREVIOUS:-}
+      PROCUREMENT_KEK_PREVIOUS_VERSION: ${PROCUREMENT_KEK_PREVIOUS_VERSION:-}
       DATABASE_URL: "postgres://${POSTGRES_USER:-tarleaks}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-tarleaks}?options=-csearch_path%3Dprocurement,public"
 
   construction:
@@ -1015,6 +1178,10 @@ services:
     <<: *service
     # OCR of large scans needs more than the other services.
     mem_limit: ${PDFTOOLS_MEM_LIMIT:-2g}
+    # Its working files (large scans) on disk, not in memory.
+    tmpfs: []
+    volumes:
+      - scratch-pdftools:/tmp
     profiles: [pdftools]
     image: ${TARLEAKS_REGISTRY:-registry.tarleaks.com/tarleaks-erp}/pdftools:${TARLEAKS_VERSION:?TARLEAKS_VERSION is not set}
     environment:
@@ -1023,6 +1190,9 @@ services:
       # Contracts calls documents and the PDF tools on their internal routes
       # (no sign-in); all three must hold the same value.
       INTERNAL_API_TOKEN_SECRET: ${INTERNAL_TOKEN:?INTERNAL_TOKEN is not set - run ./install.sh}
+      # Seals the signing certificates (and their passwords) saved in PDF
+      # Tools. Never change it: saved certificates cannot be used without it.
+      PDFTOOLS_SIGN_KEY: ${PDFTOOLS_SIGN_KEY:?PDFTOOLS_SIGN_KEY is not set - run ./install.sh}
       DATABASE_URL: "postgres://${POSTGRES_USER:-tarleaks}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-tarleaks}?options=-csearch_path%3Dpdftools,public"
 
   diagrams:
@@ -1032,10 +1202,10 @@ services:
     environment:
       <<: *env
       HTTP_REQUEST_TIMEOUT_SECS: ${HTTP_LONG_REQUEST_TIMEOUT_SECS:-300}
-      # The engine behind AI drawing (service `diagrams-engine`, an add-on).
-      # Empty = this installation has no AI drawing: the Diagrams app says so
-      # instead of offering it.
-      DIAGRAMS_ENGINE_URL: ${TARLEAKS_DIAGRAMS_ENGINE_URL:-}
+      # Empty = no separate AI engine. From 1.2.0 the Diagrams app draws with
+      # AI by itself, with the company's AI settings; a 1.0.0 image reads this
+      # and then simply offers no AI drawing.
+      DIAGRAMS_ENGINE_URL: ""
       # Where the app embeds the diagram editor from (the `drawio` add-on at
       # <address>/drawio/). Empty = this installation has no diagram editor, and
       # the app says so instead of loading one from the internet. The service
@@ -1077,6 +1247,10 @@ services:
   # It keeps only editing sessions and caches (the documents themselves are in
   # the file store), which is why its volumes are not in the backup.
   onlyoffice:
+    # Document Server runs several programs under its own users and sets up
+    # its folders as root at start: it keeps its capabilities, but no program
+    # in it can gain more (setuid files are ignored).
+    security_opt: [no-new-privileges:true]
     image: ${ONLYOFFICE_IMAGE:-${TARLEAKS_ONLYOFFICE_IMAGE:-${TARLEAKS_REGISTRY:-registry.tarleaks.com/tarleaks-erp}/onlyoffice:${TARLEAKS_VERSION:?TARLEAKS_VERSION is not set}}}
     profiles: [onlyoffice]
     restart: unless-stopped
@@ -1106,6 +1280,8 @@ services:
   # ERP already has, and tells it so (it builds its links from the forwarded
   # address). config/onlyoffice/proxy.conf.template.
   onlyoffice-proxy:
+    # Writes its configuration from the template at start: as web above.
+    <<: *root-start
     image: ${AUTHPROXY_IMAGE:-nginx:1.30.6-alpine}
     profiles: [onlyoffice]
     restart: unless-stopped
@@ -1129,7 +1305,9 @@ services:
   # static pages: it keeps no data. Cloud storage, server-side export and every
   # outside address are switched off (docs/configuration.md#editors).
   drawio:
-    image: ${DRAWIO_IMAGE:-jgraph/drawio:31.4.6}
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    image: ${DRAWIO_IMAGE:-jgraph/drawio:31.7.0}
     profiles: [drawio]
     restart: unless-stopped
     mem_limit: ${DRAWIO_MEM_LIMIT:-1g}
@@ -1148,31 +1326,6 @@ services:
         style-src \'self\' \'unsafe-inline\'; frame-src \'self\';
         worker-src \'self\' blob:
 
-  # The engine behind AI drawing in the Diagrams app (from release 1.2.0).
-  # Stateless: it keeps no data, and holds a company's AI key only while it
-  # answers one request. Which AI provider and model a company uses is set by
-  # that company (Settings, AI); GROQ_API_KEY / DIAGRAMS_MODEL_ID in .env are
-  # only the fallback for a company that has set none.
-  diagrams-engine:
-    image: ${TARLEAKS_REGISTRY:-registry.tarleaks.com/tarleaks-erp}/diagrams-engine:${TARLEAKS_VERSION:?TARLEAKS_VERSION is not set}
-    profiles: [diagrams-engine]
-    restart: unless-stopped
-    logging: *logging
-    mem_limit: ${DIAGRAMS_ENGINE_MEM_LIMIT:-512m}
-    environment:
-      REQUEST_TIMEOUT_SECS: ${HTTP_LONG_REQUEST_TIMEOUT_SECS:-300}
-      MODEL_ID: ${DIAGRAMS_MODEL_ID:-}
-      OPENAI_API_KEY: ${GROQ_API_KEY:-}
-      OPENAI_BASE_URL: ${DIAGRAMS_AI_BASE_URL:-https://api.groq.com/openai/v1}
-      HTTPS_PROXY: ${HTTPS_PROXY:-}
-      HTTP_PROXY: ${HTTP_PROXY:-}
-      NO_PROXY: *no_proxy
-    healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8023/healthz', timeout=3)"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
-      start_period: 20s
 
 volumes:
   pgdata:
@@ -1180,6 +1333,10 @@ volumes:
   rabbitdata:
   files:
   hrdocs:
+  # Working files of backups, restores and PDF tools (emptied by nothing; the
+  # programs delete their own). Not in the backup.
+  scratch-auth:
+  scratch-pdftools:
   # The document editor's sessions and caches (add-on `onlyoffice`).
   onlyoffice-data:
   onlyoffice-lib:

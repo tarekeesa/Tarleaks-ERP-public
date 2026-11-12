@@ -68,4 +68,3 @@ imtithal           app       imtithal            documents,activities           
 iso42001           app       iso42001            imtithal                                     -                                                  -                               64     ISO/IEC 42001 — AI Management System
 onlyoffice         addon     onlyoffice          documents                                    -                                                  -                               2048   Document editor (OnlyOffice)
 drawio             addon     drawio              diagrams                                     -                                                  -                               256    Diagram editor (draw.io)
-diagrams-engine    addon     diagrams-engine     diagrams                                     -                                                  -                               192    Diagram AI engine

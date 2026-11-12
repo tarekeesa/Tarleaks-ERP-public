@@ -35,7 +35,11 @@ expect=$(cat <<'TABLE'
 /api/public/unknown                            api-fallback
 /api/activities/invite/respond/abc             activities-public
 /api/activities/tasks                          activities
-/api/auth/login                                auth-public
+/api/auth/login                                auth-login
+/api/auth/login/challenge/abc/verify           auth-login
+/api/auth/login/challenge/abc/email            auth-login
+/api/auth/login/challenge/abc/cancel           auth-public
+/api/auth/login/challenge/abc                  auth-public
 /api/auth/sso/start                            auth-public
 /api/auth/sso/config                           auth
 /api/auth/saml/config                          auth
@@ -54,6 +58,19 @@ expect=$(cat <<'TABLE'
 /admin/                                        web
 TABLE
 )
+
+# Every rateLimit says its period: Traefik's default is ONE SECOND, which reads
+# like a minute and once let 60 sign-in tries a second through.
+nop=$(awk '
+  /^ *rateLimit:/ { if (open && !found) print name; open=1; ind=match($0,/[^ ]/); found=0; name=prev; next }
+  open { i=match($0,/[^ ]/); if (i>0 && i<=ind) { if (!found) print name; open=0 } else if ($1=="period:") found=1 }
+  { if ($0 ~ /^    [A-Za-z0-9_-]+:$/) { prev=$1; sub(/:$/, "", prev) } }
+  END { if (open && !found) print name }
+' config/traefik/dynamic/routes.yml)
+if [ -n "$nop" ]; then
+  printf '::error::rateLimit without period (Traefik reads it per SECOND): %s\n' $nop
+  exit 1
+fi
 
 img=$(sed -n 's/.*TRAEFIK_IMAGE:-\([^}]*\)}.*/\1/p' docker-compose.yml | head -1)
 name="tarleaks-route-check-$$"

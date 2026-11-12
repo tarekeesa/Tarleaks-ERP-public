@@ -64,3 +64,30 @@ function Write-SigningKeyNote($result) {
     'mismatch' { Warn 'JWT_SIGNING_KEY_DER is set in .env, but JWT_SIGNING_KID is empty or not in JWT_PUBLIC_KEYS: the sign-in service will not start. Put the three JWT_SIGNING_KID, JWT_SIGNING_KEY_DER and JWT_PUBLIC_KEYS lines back from a backup of .env, or delete all three lines to make a new key (everyone signs in again).' }
   }
 }
+
+# The apps' own signing keys (Ed25519; env_fill_app_signing_keys in
+# scripts/lib-env.sh): LMS_PASSPORT_SIGNING_KEY_DER (learning certificates and
+# passport links) and BADGE_SIGNING_KEY_DER (Open Badges), each its own key,
+# never the sign-in token key; only the private half (base64 PKCS#8) is kept.
+# Made once when missing, never replaced. Returns 'added', 'unavailable' (one
+# is still missing; the next start tries again) or $null (both there).
+function Add-AppSigningKey {
+  $added = $false
+  foreach ($k in 'LMS_PASSPORT_SIGNING_KEY_DER', 'BADGE_SIGNING_KEY_DER') {
+    if (Get-EnvValue $k) { continue }
+    $pair = Get-Ed25519Pair
+    if (-not $pair) { return 'unavailable' }
+    Set-EnvValue $k ($pair -split ' ')[0]
+    $added = $true
+  }
+  if ($added) { return 'added' }
+  return $null
+}
+
+# The message for Add-AppSigningKey's answer (install.ps1 and tarleaks.ps1).
+function Write-AppSigningKeyNote($result) {
+  switch ($result) {
+    'added' { Ok 'Created the signing keys of learning certificates and badges' }
+    'unavailable' { Warn 'Could not create the signing keys of learning certificates and badges yet (the message-queue image is not on this computer). Everything works except issuing those; .\tarleaks.ps1 start tries again.' }
+  }
+}

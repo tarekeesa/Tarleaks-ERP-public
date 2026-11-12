@@ -17,6 +17,16 @@
   .\install.ps1 -Editors off             # no document/diagram editors (saves ~2 GB)
   .\install.ps1 -Offline     # no download: use the images already here
                              # (load them first: .\tarleaks.ps1 load-bundle <folder>)
+  .\install.ps1 -FromCloud TLM-XXXXX-XXXXX-XXXXX-XXXXX
+                                         # From 1.2.0: move a company from Tarleaks
+                                         # Cloud to this new computer instead of the
+                                         # setup screen (code: Settings > Move
+                                         # to your own server; docs\move-from-cloud.md)
+  .\install.ps1 -FromCloud <code> -SwitchOver
+                                         # the same, and switch over without asking
+                                         # once everything is copied and checked
+  .\install.ps1 -Vendor https://...      # only to test against another Tarleaks
+                                         # platform (default: tarleaks.com)
 
 .NOTES
   Safe to run again: an existing .env keeps its keys and passwords.
@@ -41,7 +51,12 @@ param(
   # local: this computer or the office network (http). production: a real
   # domain behind your own HTTPS reverse proxy (docs/https.md); a Windows
   # machine does not get the certificate itself, use a Linux server for that.
-  [ValidateSet('', 'local', 'production')] [string] $ProfileEnv = ''
+  [ValidateSet('', 'local', 'production')] [string] $ProfileEnv = '',
+  # From 1.2.0: the move code from the cloud workspace (docs\move-from-cloud.md).
+  [string] $FromCloud = '',
+  [switch] $SwitchOver,
+  # Only to test against another Tarleaks platform; empty = tarleaks.com.
+  [string] $Vendor = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -95,9 +110,18 @@ if ($Trial -and $LicenceKey -and $LicenceKey -ne 'none') { Write-Host '  [x]  Gi
 if ($Bind -and $Bind -notin 'local', 'network', 'office' -and $Bind -notmatch '^\d{1,3}(\.\d{1,3}){3}$') { Write-Host '  [x]  -Bind must be local (this computer only), office (the whole network) or an IP address of this computer' -ForegroundColor Red; exit 1 }
 if ($Editors -and $Editors -notin 'on', 'off') { Write-Host '  [x]  -Editors must be on or off' -ForegroundColor Red; exit 1 }
 if ($Port -lt 0 -or $Port -gt 65535) { Write-Host '  [x]  -Port must be a number from 1 to 65535' -ForegroundColor Red; exit 1 }
+# A move from Tarleaks Cloud (docs\move-from-cloud.md).
+. (Join-Path $PSScriptRoot 'scripts/lib-move.ps1')
+if ($FromCloud -and -not (Test-MoveCode $FromCloud)) { Write-Host '  [x]  -FromCloud needs the move code, which looks like TLM-XXXXX-XXXXX-XXXXX-XXXXX: make it in the cloud workspace, Settings > Move to your own server.' -ForegroundColor Red; exit 1 }
+if ($SwitchOver -and -not $FromCloud) { Write-Host '  [x]  -SwitchOver goes with -FromCloud <code> (on an installed computer: .\tarleaks.ps1 migrate-from-cloud -SwitchOver)' -ForegroundColor Red; exit 1 }
+if ($Vendor -and -not (Test-MoveVendor $Vendor)) { Write-Host '  [x]  -Vendor must be an address such as https://tarleaks.com (or default).' -ForegroundColor Red; exit 1 }
 
 Write-Host ''
 Write-Host 'Tarleaks ERP - installer' -ForegroundColor White
+if ($FromCloud) {
+  Write-Host 'Moving a company from Tarleaks Cloud: this sets up the computer, then moves the company in'
+  Write-Host '(no setup screen). docs\move-from-cloud.md'
+}
 Write-Host ''
 
 # ---- 1. The machine ---------------------------------------------------------
@@ -175,6 +199,10 @@ elseif ($Yes) { $Apps = Get-AppPreset $suggest }
 else {
   Write-Host ''
   Write-Host 'Which apps do you want? Only these run, with what they need.' -ForegroundColor White
+  if ($FromCloud) {
+    Write-Host '  Choose at least the apps the company uses in Tarleaks Cloud. The data of an app left out'
+    Write-Host '  is moved too and kept; add the app later with .\tarleaks.ps1 apps add <app>.'
+  }
   Write-Host '  1) small     HR, recruitment, attendance, payroll, accounting, CRM, inventory, sales orders, chat'
   Write-Host '  2) standard  small + projects, learning, recognition, assets, helpdesk, fleet, correspondence,'
   $notYet = Get-AppNotYet; $gone = Get-AppWithdrawn
@@ -334,8 +362,16 @@ Fill 'HELPDESK_TOKEN_KEY' { B64 32 }
 Fill 'SUBSCRIPTIONS_KEY_SEAL_KEY' { B64 32 }
 Fill 'MARKETPLACE_TOKEN_KEY' { B64 32 }
 Fill 'INSIGHTS_SOURCE_KEY' { B64 32 }
+Fill 'INSIGHTS_VISITOR_HASH_KEY' { Hex 32 }
 Fill 'PROCUREMENT_KEK' { B64 32 }
 Fill 'CONTRACTS_PROVIDER_KEY' { B64 32 }
+Fill 'ACTIVITIES_INVITE_SECRET' { Hex 32 }
+Fill 'CORRESPONDENCE_MAILBOX_KEY' { B64 32 }
+Fill 'CRM_EMAIL_TOKEN_KEY' { B64 32 }
+Fill 'EINVOICE_SEAL_KEY' { B64 32 }
+Fill 'PDFTOOLS_SIGN_KEY' { B64 32 }
+Fill 'SOCIAL_TOKEN_KEY' { B64 32 }
+Fill 'SSO_CREDENTIAL_KEY' { Hex 32 }
 Fill 'ONLYOFFICE_JWT_SECRET' { Hex 32 }
 Fill 'TARLEAKS_SETUP_CODE' { SetupCode }
 
@@ -449,7 +485,17 @@ if (-not (Get-EnvValue 'PG_MEM_LIMIT')) { Set-EnvValue 'PG_MEM_LIMIT' "${pgMem}m
 # a typo never leaves .env naming a release that does not exist.
 if ($Version -and $NoStart) { Set-EnvValue 'TARLEAKS_VERSION' $Version }
 if ($LicenceKey -eq 'none') { Set-EnvValue 'TARLEAKS_LICENSE_KEY' ''; Ok 'Licence key removed from .env' }
+# A move brings the company's own licence, and a key in TARLEAKS_LICENSE_KEY
+# would win over it: this one is only the download password.
+elseif ($LicenceKey -and $FromCloud) { Set-EnvValue 'TARLEAKS_DOWNLOAD_KEY' $LicenceKey }
 elseif ($LicenceKey) { Set-EnvValue 'TARLEAKS_LICENSE_KEY' $LicenceKey }
+# Only to test against another Tarleaks platform; empty = tarleaks.com.
+if ($Vendor -eq 'default') {
+  if (Get-EnvValue 'TARLEAKS_VENDOR_URL') { Set-EnvValue 'TARLEAKS_VENDOR_URL' ''; Ok 'Tarleaks Cloud is https://tarleaks.com again' }
+} elseif ($Vendor) {
+  Set-EnvValue 'TARLEAKS_VENDOR_URL' $Vendor.TrimEnd('/')
+  Warn "Tarleaks Cloud is $($Vendor.TrimEnd('/')) for this installation (TARLEAKS_VENDOR_URL in .env), for tests only."
+}
 # The private-preview image location (ghcr.io, a personal GitHub token) moved to
 # registry.tarleaks.com, where the licence key is the password. The images
 # already here get the new name too, so nothing downloads again.
@@ -470,7 +516,11 @@ if ($env:OS -eq 'Windows_NT') {
 }
 Ok 'Settings written to .env (keep a copy somewhere safe)'
 
-if ($NoStart) { Write-Host 'Not starting (-NoStart). Run .\tarleaks.ps1 start when ready.'; exit 0 }
+if ($NoStart) {
+  Write-Host 'Not starting (-NoStart). Run .\tarleaks.ps1 start when ready.'
+  if ($FromCloud) { Write-Host 'Then move the company in with the same code: .\tarleaks.ps1 migrate-from-cloud <code>' }
+  exit 0
+}
 
 # ---- 5. Images ---------------------------------------------------------------
 if ($Offline) { $env:TARLEAKS_NO_DOWNLOAD = '1' }
@@ -483,6 +533,7 @@ $emailPattern = '^[^@\s]+@[^@\s]+\.[^@\s]+$'
 if (-not $Offline -and (Test-RegistryTakesLicence) -and -not (Get-RegistryLicenceKey)) {
   Write-Host ''
   Write-Host 'A licence key is needed to download Tarleaks ERP (it is also the download password).' -ForegroundColor White
+  if ($FromCloud) { Write-Host "  The company's own licence comes with the move: the key or trial here is only used to download." }
   if (-not $Trial -and -not $Yes) {
     Write-Host '  1) I have a licence key'
     Write-Host '  2) Start the free 30-day trial (your company name and e-mail address)'
@@ -490,7 +541,8 @@ if (-not $Offline -and (Test-RegistryTakesLicence) -and -not (Get-RegistryLicenc
       $secure = Read-Host 'Paste the licence key (it is not shown)' -AsSecureString
       $key = [System.Runtime.InteropServices.Marshal]::PtrToStringBSTR([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)).Trim()
       if (-not (Test-LicenceKeyShape $key)) { Die 'That does not look like a Tarleaks licence key: one line that starts with nxs1. Copy all of it again, then run .\install.ps1 -LicenceKey <key>.' }
-      Set-EnvValue 'TARLEAKS_LICENSE_KEY' $key; Save-Env; Ok 'Licence key saved in .env'
+      if ($FromCloud) { Set-EnvValue 'TARLEAKS_DOWNLOAD_KEY' $key; Save-Env; Ok 'Download key saved in .env' }
+      else { Set-EnvValue 'TARLEAKS_LICENSE_KEY' $key; Save-Env; Ok 'Licence key saved in .env' }
     } else {
       $Trial = Ask 'Your e-mail address' ''
       if ($Trial -notmatch $emailPattern) { Die "`"$Trial`" is not an e-mail address. Run .\install.ps1 again." }
@@ -508,7 +560,8 @@ if (-not $Offline -and (Test-RegistryTakesLicence) -and -not (Get-RegistryLicenc
     if (-not $trialKey) { Die 'Nothing was downloaded. Fix the above, or give a licence key with .\install.ps1 -LicenceKey <key>.' }
     if (-not (Test-LicenceKeyShape $trialKey)) { Die 'tarleaks.com did not send a usable trial key. Run .\install.ps1 again; if it keeps failing, contact info@tarleaks.com.' }
     Set-EnvValue 'TARLEAKS_DOWNLOAD_KEY' $trialKey; Save-Env
-    Ok "Free trial started for $Trial. On the setup screen, choose the free trial with the same e-mail address."
+    if ($FromCloud) { Ok "Free trial started for $Trial, to download. The company keeps its own licence." }
+    else { Ok "Free trial started for $Trial. On the setup screen, choose the free trial with the same e-mail address." }
   }
 }
 # Before several GB of downloads: can this computer reach the licence server,
@@ -543,7 +596,7 @@ if ($Version) {
   [Environment]::SetEnvironmentVariable('TARLEAKS_VERSION', $Version, 'Process')
   $pulled = Invoke-AppPull ".\install.ps1 -Version $Version"
   [Environment]::SetEnvironmentVariable('TARLEAKS_VERSION', $null, 'Process')
-  if (-not $pulled) { Die "Nothing was started; .env still names $(Get-EnvValue 'TARLEAKS_VERSION'). Check the version number (the release notes list them)." }
+  if (-not $pulled) { Die "Nothing was started; .env still names $(Get-EnvValue 'TARLEAKS_VERSION'). Fix what is named above (a release number that does not exist: the release notes list them)." }
   Set-EnvValue 'TARLEAKS_VERSION' $Version
   [System.IO.File]::WriteAllText($envPath, (($lines -join "`n") + "`n"), (New-Object System.Text.UTF8Encoding($false)))
 } elseif (-not (Invoke-AppPull '.\install.ps1')) { exit 1 }
@@ -551,6 +604,7 @@ $downloaded = -not $Offline
 if ($downloaded) { Ok 'Images downloaded' } else { Ok 'Every image is on this computer' }
 # The sign-in token key, once: after the images, whose openssl makes it.
 Write-SigningKeyNote (Add-SigningKey)
+Write-AppSigningKeyNote (Add-AppSigningKey)
 [System.IO.File]::WriteAllText($envPath, (($lines -join "`n") + "`n"), (New-Object System.Text.UTF8Encoding($false)))
 docker compose up -d --remove-orphans
 if ($LASTEXITCODE -ne 0) { Die 'Starting failed. See: docker compose logs' }
@@ -588,16 +642,37 @@ if ($Editors -eq 'on' -and ((Get-EnvValue 'COMPOSE_PROFILES') -split ',') -conta
   if ($editorUp) { Ok 'The document editor is ready' }
   else { Warn 'The document editor is still starting. New and Edit in Documents work once it is up. See: docker compose logs onlyoffice' }
 }
-Write-Host ''
-Write-Host "Open $url in your browser." -ForegroundColor White
-Write-Host "  Setup code: $(Get-EnvValue 'TARLEAKS_SETUP_CODE')" -ForegroundColor White
-Write-Host '  Name your company, create the first administrator and start the'
-if ($downloaded) { Write-Host '  30-day free trial (or enter a licence key).' }
-else { Write-Host '  licence: with no internet, enter a licence key (the trial needs internet).' }
-Write-Host ''
+if ($FromCloud) {
+  # No setup screen: the company, its people and settings come from the cloud.
+  # .\tarleaks.ps1 does the move, so it can be watched again or resumed there.
+  if ($shellProxy -and -not (Get-EnvValue 'HTTPS_PROXY')) {
+    Write-Host ''
+    Warn "This session uses a proxy ($shellProxy) but .env sets none, so the ERP reaches Tarleaks Cloud directly. If it needs the proxy, add HTTPS_PROXY=... to .env, run .\tarleaks.ps1 restart, then .\tarleaks.ps1 migrate-from-cloud <code> (docs\configuration.md#outbound-proxy)."
+  }
+  Write-Host ''
+  Write-Host 'Moving the company from Tarleaks Cloud' -ForegroundColor White
+  if ($Yes) { $env:TARLEAKS_NO_PROMPT = '1' }   # -Yes asks nothing: the switch over then waits for -SwitchOver
+  try { & (Join-Path $PSScriptRoot 'tarleaks.ps1') migrate-from-cloud $FromCloud -SwitchOver:$SwitchOver }
+  finally { Remove-Item Env:TARLEAKS_NO_PROMPT -ErrorAction SilentlyContinue }
+  $moveExit = $LASTEXITCODE
+  if ($moveExit -ne 0) {
+    Write-Host ''
+    Warn 'Tarleaks ERP is installed and running, but the move did not finish (above). Nothing needs installing again; .\tarleaks.ps1 migrate-from-cloud -Status shows where it stands.'
+    exit $moveExit
+  }
+  Write-Host ''
+} else {
+  Write-Host ''
+  Write-Host "Open $url in your browser." -ForegroundColor White
+  Write-Host "  Setup code: $(Get-EnvValue 'TARLEAKS_SETUP_CODE')" -ForegroundColor White
+  Write-Host '  Name your company, create the first administrator and start the'
+  if ($downloaded) { Write-Host '  30-day free trial (or enter a licence key).' }
+  else { Write-Host '  licence: with no internet, enter a licence key (the trial needs internet).' }
+  Write-Host ''
+}
 Write-Host '  .\tarleaks.ps1 status | stop | start | logs | backup | upgrade'
 Write-Host ''
-if ($downloaded) {
+if ($downloaded -or $FromCloud) {
   Write-Host 'The ERP checks its licence with tarleaks.com about every 6 hours and needs'
   Write-Host 'to reach it at least once a day. Allow outbound HTTPS to tarleaks.com'
   Write-Host '(directly, or through HTTPS_PROXY in .env).'
@@ -606,7 +681,7 @@ if ($downloaded) {
   Write-Host 'licence key made for that: read docs\faq.md, "Can I install without'
   Write-Host 'internet?", before you run the setup.'
 }
-if ($shellProxy -and -not (Get-EnvValue 'HTTPS_PROXY')) {
+if (-not $FromCloud -and $shellProxy -and -not (Get-EnvValue 'HTTPS_PROXY')) {
   Write-Host ''
   Warn "This session uses a proxy ($shellProxy) but .env sets none, so the ERP connects directly. If the ERP needs it too, add HTTPS_PROXY=... to .env and run .\tarleaks.ps1 restart (docs\configuration.md#outbound-proxy)."
 }

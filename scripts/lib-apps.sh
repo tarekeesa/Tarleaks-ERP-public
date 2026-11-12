@@ -23,6 +23,9 @@
 # Signing in to the image registry with the licence key (apps_pull does it).
 # shellcheck source=scripts/lib-registry.sh
 . scripts/lib-registry.sh
+# Checking the Tarleaks signature of what was downloaded (apps_pull does it).
+# shellcheck source=scripts/lib-signature.sh
+. scripts/lib-signature.sh
 
 APPS_SHEET=${APPS_SHEET:-config/apps.tsv}
 APPS_RELEASES=${APPS_RELEASES:-config/app-releases.tsv}
@@ -243,7 +246,7 @@ apps_stop_unselected() {
 }
 
 # The editors (rows of kind `addon` in config/apps.tsv): the document editor of
-# Documents, the diagram editor and the AI engine of Diagrams. They run next to
+# Documents and the diagram editor of Diagrams. They run next to
 # the apps that use them. TARLEAKS_EDITORS=off in .env (./tarleaks editors off)
 # switches them all off; an editor whose image is newer than the release
 # (config/app-releases.tsv) is left out.
@@ -257,11 +260,6 @@ apps_editors() {
 apps_addon_units() {
   [ "$(apps_editors)" = off ] && return 0
   local late; late=$(apps_unreleased)
-  # Offline (docs/offline.md): the AI drawing engine only talks to an online
-  # AI service, so it does not run.
-  case "$(grep -E '^TARLEAKS_OFFLINE=' .env 2>/dev/null | tail -1 | cut -d= -f2-)" in
-    true|sealed) late="$late${late:+,}diagrams-engine" ;;
-  esac
   _apps_rows | awk -v set="$1" -v late="$late" '
     BEGIN {
       n = split(set, s, ","); for (i = 1; i <= n; i++) have[s[i]] = 1
@@ -282,7 +280,7 @@ apps_addons() {
 }
 
 # Write where the editors answer into .env (needs set_env from the caller): the
-# address people's browsers use, and the engine's address inside Docker. Empty
+# address people's browsers use. Empty
 # means "no such editor here", which the apps then say plainly. Recomputed on
 # every start, so a changed TARLEAKS_URL is followed.
 apps_sync_editors() {
@@ -299,7 +297,6 @@ apps_sync_editors() {
   fi
   case ",$units," in *,onlyoffice,*) set_env TARLEAKS_ONLYOFFICE_URL "$base/onlyoffice" ;; *) set_env TARLEAKS_ONLYOFFICE_URL "" ;; esac
   case ",$units," in *,drawio,*) set_env TARLEAKS_DRAWIO_URL "$base/drawio/" ;; *) set_env TARLEAKS_DRAWIO_URL "" ;; esac
-  case ",$units," in *,diagrams-engine,*) set_env TARLEAKS_DIAGRAMS_ENGINE_URL "http://diagrams-engine:8023" ;; *) set_env TARLEAKS_DIAGRAMS_ENGINE_URL "" ;; esac
 }
 
 # Images the chosen services run that are not on this machine (one per line).
@@ -311,8 +308,24 @@ _apps_missing_images() {
   done
 }
 
+# A pull that failed because the connection dropped (worth trying again), not
+# because something refused it (licence, missing release or platform, disk, a
+# certificate): then trying again cannot help.
+_apps_pull_dropped() {
+  grep -qiE 'unauthorized|denied|authentication required|manifest unknown|not found|no matching manifest|does not match the specified platform|no space left on device|x509|certificate|toomanyrequests|rate limit' "$1" && return 1
+  grep -qiE 'timeout|timed out|dial tcp|no such host|connection refused|connection reset|network is unreachable|EOF|TLS handshake|broken pipe|503 Service Unavailable|502 Bad Gateway' "$1"
+}
+
+# The last thing Docker said about a failed pull, on one line (no secrets: Docker
+# prints image names, addresses and the error, never a password).
+_apps_pull_reason() {
+  grep -v '^[[:space:]]*$' "$1" | tail -1 | tr -s '[:space:]' ' ' | sed 's/^ //; s/ $//' | cut -c1-300
+}
+
 # Download the images for the services that will run, and turn the usual
-# failures into a sentence with the fix. Returns non-zero after printing it.
+# failures into a sentence with the fix. Returns non-zero after printing it:
+# 3 when the signature check refused the images (not signed by Tarleaks, or images
+# already here that this machine never checked: scripts/lib-signature.sh).
 #   apps_pull "./install.sh"     (the command to run again, for the message)
 apps_pull() {
   local again=$1 log missing moved
@@ -324,7 +337,8 @@ apps_pull() {
   if [ "${TARLEAKS_NO_DOWNLOAD:-0}" = 1 ]; then
     echo "Offline: using the images already on this machine (no download)."
     missing=$(_apps_missing_images) || { echo "Could not read the list of images from docker-compose.yml." >&2; return 1; }
-    [ -z "$missing" ] && return 0
+    # Images already here run only when this machine checked their signature (a signed bundle, an earlier download).
+    if [ -z "$missing" ]; then sig_require_verified "$again" || return 3; return 0; fi
     echo "Not on this machine:" >&2; printf '%s\n' "$missing" | sed 's/^/  /' >&2
     echo "Load the offline bundle for this release first (./tarleaks load-bundle <folder>), then run $again --offline again. See docs/faq.md, \"Can I install without internet?\"" >&2
     return 1
@@ -334,17 +348,30 @@ apps_pull() {
   if ! registry_login "$again"; then
     if missing=$(_apps_missing_images) && [ -z "$missing" ]; then
       echo "Carrying on with the images already on this machine." >&2
+      sig_require_verified "$again" || return 3
       return 0
     fi
     return 1
   fi
   log=$(mktemp)
-  if docker compose pull --quiet 2>"$log"; then rm -f "$log"; return 0; fi
+  # A dropped connection halfway through a download (a reset, a timeout, an
+  # unexpected EOF from the registry or Docker Hub) is usually gone a few
+  # seconds later, and Docker keeps the layers it already has: try again twice
+  # before giving up. Refusals (licence, missing release, disk) are not retried.
+  local try=1
+  while ! docker compose pull --quiet 2>"$log"; do
+    if [ "$try" -ge "${TARLEAKS_PULL_TRIES:-3}" ] || ! _apps_pull_dropped "$log"; then try=0; break; fi
+    echo "The download was interrupted ($(_apps_pull_reason "$log")). Trying again in ${TARLEAKS_PULL_WAIT:-10} seconds; what is already downloaded is kept." >&2
+    sleep "${TARLEAKS_PULL_WAIT:-10}"; try=$((try + 1))
+  done
+  # Downloaded: run nothing that Tarleaks did not sign (scripts/lib-signature.sh).
+  # Exit 3 when the signature check refused them (the caller must not fall back to them).
+  [ "$try" = 0 ] || { rm -f "$log"; sig_verify_images "$again" || return 3; return 0; }
   # The download failed, but every image may already be here (an offline
   # bundle was loaded): carry on with those.
   if missing=$(_apps_missing_images) && [ -z "$missing" ]; then
     echo "The download failed, but every image is already on this machine. Carrying on with those." >&2
-    rm -f "$log"; return 0
+    rm -f "$log"; sig_require_verified "$again" || return 3; return 0
   fi
   local version=${TARLEAKS_VERSION:-}; [ -n "$version" ] || version=$(grep -E "^TARLEAKS_VERSION=" .env 2>/dev/null | tail -1 | cut -d= -f2-)
   local reg_host; reg_host=$(registry_host)
@@ -368,6 +395,7 @@ apps_pull() {
   elif grep -qiE 'x509|certificate' "$log"; then
     echo "A certificate was not accepted while downloading: a proxy is probably inspecting HTTPS. Ask your network team to exempt $reg_host and Docker Hub, or set up Docker with your proxy (examples/outbound-proxy), then run $again again." >&2
   elif grep -qiE 'timeout|dial tcp|no such host|connection refused|network is unreachable|i/o timeout|EOF' "$log"; then
+    echo "Docker said: $(_apps_pull_reason "$log")" >&2
     echo "The server could not reach the image registries. Allow outbound HTTPS to $reg_host, tarleaks.com, registry-1.docker.io and production.cloudflare.docker.com (behind a company proxy: examples/outbound-proxy), then run $again again." >&2
   else
     cat "$log" >&2

@@ -60,7 +60,7 @@ them. Add any of them later with `./tarleaks apps add <app>`.
 |---|---|---|---|---|
 | `small` | HR, Recruitment, Attendance, Payroll, Accounting, CRM, Inventory & Warehouse, Sales Orders & Fulfilment, Chat & Calls | 29 | about 4.6 GB | about 2.6 GB |
 | `standard` | HR, Recruitment, Attendance, Payroll, Accounting, CRM, Inventory & Warehouse, Sales Orders & Fulfilment, Chat & Calls, Project Management, Learning Management (LMS), Gamification, Asset Management, Helpdesk, Fleet, Correspondence, Point of Sale, Rentals, Subscriptions & Licensing, Procurement, Construction & Contracting, Contracts & E-Signature | 42 | about 5.8 GB | about 3.8 GB |
-| `full` | HR, Recruitment, Attendance, Payroll, Accounting, CRM, Inventory & Warehouse, Sales Orders & Fulfilment, Chat & Calls, Project Management, Learning Management (LMS), Gamification, Asset Management, Helpdesk, Fleet, Correspondence, Point of Sale, Rentals, Subscriptions & Licensing, Procurement, Construction & Contracting, Contracts & E-Signature, PDF Tools (with OCR), Diagram Studio, Imtithal — ISO Compliance Suite, ISO/IEC 42001 — AI Management System | 48 | about 7.2 GB | about 4.7 GB |
+| `full` | HR, Recruitment, Attendance, Payroll, Accounting, CRM, Inventory & Warehouse, Sales Orders & Fulfilment, Chat & Calls, Project Management, Learning Management (LMS), Gamification, Asset Management, Helpdesk, Fleet, Correspondence, Point of Sale, Rentals, Subscriptions & Licensing, Procurement, Construction & Contracting, Contracts & E-Signature, PDF Tools (with OCR), Diagram Studio, Imtithal — ISO Compliance Suite, ISO/IEC 42001 — AI Management System | 47 | about 7.0 GB | about 4.7 GB |
 
 `./tarleaks profile small|standard|full` switches to a preset.
 
@@ -71,16 +71,15 @@ work here as they do in the hosted service:
 
 - **Document editor (OnlyOffice)** (`onlyoffice`), runs with `documents`, about 2048 MB
 - **Diagram editor (draw.io)** (`drawio`), runs with `diagrams`, about 256 MB
-- **Diagram AI engine** (`diagrams-engine`), runs with `diagrams`, about 192 MB
 
 - The document editor is what makes **New** and **Edit** work in Documents (and
   letter and contract templates in HR). Without it Documents still stores,
   previews, shares and downloads files, and says that editing is not part of this
   installation.
-- The diagram editor belongs to the Diagrams app, which runs on release 1.0.0
-  only: Diagram Studio is not in 1.2.0 while it is rebuilt, and neither the
-  editor nor its AI engine runs there.
-- `./tarleaks editors off` stops all three and gives their memory back;
+- The diagram editor belongs to the Diagrams app (Diagram Studio). Diagram Studio
+  draws with AI by itself, with the company's own AI settings, so there is no
+  separate engine to run.
+- `./tarleaks editors off` stops both and gives their memory back;
   `./tarleaks editors on` brings them back. Your documents and diagrams stay.
   More: [configuration.md](configuration.md#editors).
 
@@ -171,7 +170,6 @@ a release does not have it; the app is simply not started.
 - Procurement (`procurement`): from release 1.2.0
 - Construction & Contracting (`construction`): from release 1.2.0
 - Contracts & E-Signature (`contracts`): from release 1.2.0
-- Diagram Studio (`diagrams`): releases 1.0.0 up to (not including) 1.2.0. Taken out while it is rebuilt; it returns in a later release
 
 ## When something does not add up
 

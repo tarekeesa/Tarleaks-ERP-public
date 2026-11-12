@@ -8,8 +8,13 @@
   .\tarleaks.ps1 logs auth
   .\tarleaks.ps1 update                  # newest release: check, back up, update (-To 1.2.0, -Check)
   .\tarleaks.ps1 upgrade 1.1.0            # -Offline: no download, images already here
-  .\tarleaks.ps1 backup                   # or: backup D:\Backups\erp-monday
+  .\tarleaks.ps1 backup                   # or: backup D:\Backups\erp-monday; -Offsite: then an encrypted copy off this disk
   .\tarleaks.ps1 restore backups\20261008-021500   # -KeepSettings: keep this folder's name, port and address
+  .\tarleaks.ps1 restore -FromCloud -RecoveryKit recovery-kit-....txt   # put an off-site copy back (or: restore -FromCloud <copy> ...)
+  .\tarleaks.ps1 cloud backup-key init   # verify | forget-secret | restore | rotate (-RecoveryKit <file>): the off-site copies' keys
+  .\tarleaks.ps1 cloud backup target folder E:\TarleaksCopies   # -SameDisk to allow the ERP's own disk; or: target off
+  .\tarleaks.ps1 cloud backup list       # verify <copy> | prune | schedule 02:30 | schedule off
+  .\tarleaks.ps1 cloud status
   .\tarleaks.ps1 setup-code
   .\tarleaks.ps1 reset-admin boss@example.com   # -Company <name> -ResetTwoFactor: an administrator who cannot sign in gets a temporary password
   .\tarleaks.ps1 apps
@@ -18,8 +23,11 @@
   .\tarleaks.ps1 profile standard
   .\tarleaks.ps1 editors off             # or on: the document and diagram editors
   .\tarleaks.ps1 network local           # or office: who may open the ERP
-  .\tarleaks.ps1 load-bundle D:\tarleaks-1.1.0-linux-amd64
+  .\tarleaks.ps1 load-bundle D:\tarleaks-1.1.0-linux-amd64   # checks its Tarleaks signature (-AllowUnsigned: skip, at your own risk)
   .\tarleaks.ps1 uninstall               # -Purge: delete the data too
+  .\tarleaks.ps1 sample-data load        # From 1.2.0: status|load|check|remove|resume|modules, -Company <name> -InstallPacks -Adopt -Yes (docs\sample-data.md)
+  .\tarleaks.ps1 migrate-from-cloud TLM-XXXXX-XXXXX-XXXXX-XXXXX   # From 1.2.0: move a company from Tarleaks Cloud to this new installation (-SwitchOver: switch over without asking; docs\move-from-cloud.md)
+  .\tarleaks.ps1 migrate-from-cloud -Status   # watch it again; -Resume: go on after a stop; -SwitchOver: switch over; -Cancel: stop and remove the copy
   .\tarleaks.ps1 doctor                  # check the installation, explain problems
   .\tarleaks.ps1 doctor -Bundle          # the same, plus logs and versions, in one file for support
 #>
@@ -36,7 +44,23 @@ param(
   [string] $Company = '',
   [switch] $ResetTwoFactor,
   [switch] $KeepSettings,
-  [switch] $Bundle
+  [switch] $Bundle,
+  [switch] $Offsite,
+  [switch] $Scheduled,
+  [switch] $SameDisk,
+  [switch] $FromCloud,
+  [string] $RecoveryKit = '',
+  [switch] $Yes,
+  [switch] $Adopt,
+  [switch] $InstallPacks,
+  [switch] $Json,
+  [switch] $ForceNonempty,
+  [switch] $SwitchOver,
+  [switch] $Resume,
+  [switch] $Cancel,
+  [switch] $AllowUnsigned,
+  [switch] $Status,
+  [string] $Vendor = ''
 )
 $ErrorActionPreference = 'Stop'
 Set-Location -Path $PSScriptRoot
@@ -86,7 +110,7 @@ $script:RestoreKeepKeys = @('COMPOSE_PROJECT_NAME', 'HTTP_PORT', 'HTTP_BIND', 'T
 # Kept on EVERY restore: the message queue's account is made once, when this
 # folder's queue volume is first created, and a restore does not touch that
 # volume. The backup's password would lock every service out of the queue.
-$script:RestoreAlwaysKeep = @('RABBITMQ_USER', 'RABBITMQ_PASSWORD')
+$script:RestoreAlwaysKeep = @('RABBITMQ_USER', 'RABBITMQ_PASSWORD', 'TARLEAKS_CLOUD_BACKUP', 'TARLEAKS_OFFSITE_FOLDER', 'TARLEAKS_CLOUD_BACKUP_RETENTION')
 # Secrets a newer kit needs that an older .env does not have yet (1.0.0 has
 # no PROCUREMENT_KEK, for one): without them Compose refuses the whole file.
 # Only missing or GENERATED keys are written, as install.ps1 does.
@@ -97,8 +121,11 @@ function Add-NewKeys {
     STORAGE_SECRET_KEY = 'hex32'; JWT_SECRET = 'hex32'; CLUSTER_DSN_KEY = 'b64'; INTERNAL_TOKEN = 'hex32'
     PORTAL_JWT_SECRET = 'hex32'; NOTIFICATIONS_KEK = 'b64'; NOTIFICATIONS_UNSUB_SECRET = 'hex32'
     NOTIFICATIONS_OAUTH_SECRET = 'hex32'; HELPDESK_TOKEN_KEY = 'b64'; SUBSCRIPTIONS_KEY_SEAL_KEY = 'b64'
-    MARKETPLACE_TOKEN_KEY = 'b64'; INSIGHTS_SOURCE_KEY = 'b64'; PROCUREMENT_KEK = 'b64'
-    CONTRACTS_PROVIDER_KEY = 'b64'; ONLYOFFICE_JWT_SECRET = 'hex32'
+    MARKETPLACE_TOKEN_KEY = 'b64'; INSIGHTS_SOURCE_KEY = 'b64'; INSIGHTS_VISITOR_HASH_KEY = 'hex32'
+    PROCUREMENT_KEK = 'b64'; CONTRACTS_PROVIDER_KEY = 'b64'; ACTIVITIES_INVITE_SECRET = 'hex32'
+    CORRESPONDENCE_MAILBOX_KEY = 'b64'; CRM_EMAIL_TOKEN_KEY = 'b64'; EINVOICE_SEAL_KEY = 'b64'
+    PDFTOOLS_SIGN_KEY = 'b64'; SOCIAL_TOKEN_KEY = 'b64'; SSO_CREDENTIAL_KEY = 'hex32'
+    ONLYOFFICE_JWT_SECRET = 'hex32'
   }
   $n = 0
   foreach ($k in $keys.Keys) {
@@ -113,6 +140,7 @@ function Add-NewKeys {
   }
   if ($n) { Ok "Added $n setting(s) this kit needs to .env (new keys only; existing values unchanged)" }
   Write-SigningKeyNote (Add-SigningKey)
+  Write-AppSigningKeyNote (Add-AppSigningKey)
 }
 # An .env written before the rename has NEXUS_<key> lines: rename each to
 # TARLEAKS_<key> in place, keeping its value (keys are never regenerated).
@@ -146,6 +174,8 @@ function Port { $p = Get-EnvValue 'HTTP_PORT'; if ($p) { $p } else { '80' } }
 . (Join-Path $PSScriptRoot 'scripts/lib-apps.ps1')
 . (Join-Path $PSScriptRoot 'scripts/lib-keys.ps1')
 . (Join-Path $PSScriptRoot 'scripts/lib-scrub.ps1')
+. (Join-Path $PSScriptRoot 'scripts/lib-cloud.ps1')
+. (Join-Path $PSScriptRoot 'scripts/lib-move.ps1')
 $script:AppsVersion = Get-EnvValue 'TARLEAKS_VERSION'
 # The migrate image was renamed with the rebrand: nexus-migrate up to 1.1.x,
 # tarleaks-migrate from 1.2.0. docker-compose.yml reads TARLEAKS_MIGRATE_IMAGE;
@@ -431,6 +461,40 @@ done
   }
 }
 
+# Every offline bundle Tarleaks publishes carries a cosign signature of its checksum list (SHA256SUMS.sigstore.json),
+# made with the Tarleaks release key; config\sigstore\tarleaks-release.pub is its public half. A bundle that is
+# unsigned, signed by anyone else or changed after signing is refused before anything is checked or loaded.
+# config\sigstore\trusted_root.json (Sigstore's public trust root) lets this work without internet.
+function Confirm-Signature([string] $File) {
+  $sig = "$File.sigstore.json"
+  $name = Split-Path $File -Leaf
+  if ($AllowUnsigned -or $env:TARLEAKS_ALLOW_UNSIGNED -eq '1') {
+    Warn "Signature of $name NOT checked (-AllowUnsigned). Load only a bundle you made or got from Tarleaks yourself."
+    return
+  }
+  $pub = Join-Path $PSScriptRoot 'config\sigstore\tarleaks-release.pub'
+  $root = Join-Path $PSScriptRoot 'config\sigstore\trusted_root.json'
+  if (-not (Test-Path -LiteralPath $sig)) { Die "$(Split-Path $sig -Leaf) is missing: this bundle is not signed by Tarleaks (or the file was not copied with it). Copy every file of the release, or, for a bundle you made yourself, add -AllowUnsigned." }
+  if (-not (Test-Path -LiteralPath $pub)) { Die "$pub is missing from this kit: it cannot check the bundle's signature. Update the kit (git pull), or add -AllowUnsigned." }
+  if (-not (Get-Command cosign -ErrorAction SilentlyContinue)) { Die 'cosign is needed to check the bundle''s signature: install cosign 2.4 or later (one file: https://github.com/sigstore/cosign/releases, or winget install sigstore.cosign), then run this again. Or add -AllowUnsigned.' }
+  $common = @('verify-blob', '--key', $pub, '--bundle', $sig)
+  $ver = ((& cosign version 2>$null) | Select-String '^GitVersion:\s*v?(\S+)' | Select-Object -First 1)
+  if ($ver) {
+    $v = $ver.Matches[0].Groups[1].Value
+    if ($v -match '^(1\.|2\.[0-3]\.)') { Die "cosign $v is too old to check this signature: install cosign 2.4 or later." }
+    if ($v -match '^2\.') { $common += '--new-bundle-format' }
+  }
+  # Without internet the trust root comes from the kit; with internet cosign may also fetch a newer one.
+  $old = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+  $out = & cosign @common --trusted-root $root $File 2>&1
+  $ok = $LASTEXITCODE -eq 0
+  if (-not $ok) { $out = & cosign @common $File 2>&1; $ok = $LASTEXITCODE -eq 0 }
+  $ErrorActionPreference = $old
+  if ($ok) { Ok "Signed by Tarleaks: $name"; return }
+  $out | Select-Object -Last 2 | ForEach-Object { Write-Host "  $_" }
+  Die "The signature of $name does not verify: the bundle was changed or is not from Tarleaks. Do not load it; download it again from the release page."
+}
+
 # Checks every "<sha256>  <file>" line of a checksum file; lists what fails.
 function Test-Checksums([string] $Folder, [string] $SumsFile) {
   $good = $true
@@ -528,7 +592,7 @@ function Invoke-Doctor {
     }
 
     Write-Host 'Containers'
-    $oneShot = @('rabbitmq-init', 'objects-init', 'postgres-prepare', 'migrate', 'crm-migrate', 'parties-migrate', 'sales_orders-migrate')
+    $oneShot = @('rabbitmq-init', 'objects-init', 'volume-owner', 'postgres-prepare', 'migrate', 'crm-migrate', 'parties-migrate', 'sales_orders-migrate')
     $states = @(docker compose ps -a --format '{{.Service}} {{.State}} {{.ExitCode}} {{.Health}}' 2>$null)
     $wanted = @(docker compose config --services 2>$null)
     $down = @(); $sick = @(); $failed = @(); $n = 0
@@ -797,9 +861,9 @@ function New-SupportBundle([string] $Out) {
 }
 
 switch ($Command) {
-  'start'   { Write-SigningKeyNote (Add-SigningKey); Sync-App; docker compose up -d --remove-orphans; Stop-UnselectedApp; Wait-Ready; Wait-Editor }
+  'start'   { Write-SigningKeyNote (Add-SigningKey); Write-AppSigningKeyNote (Add-AppSigningKey); Sync-App; if (-not (Confirm-ReleaseVerified '.\tarleaks.ps1 start')) { exit 1 }; docker compose up -d --remove-orphans; Stop-UnselectedApp; Wait-Ready; Wait-Editor }
   'stop'    { Stop-All; Write-Host 'Stopped. Your data is kept; .\tarleaks.ps1 start brings it back.' -ForegroundColor Green }
-  'restart' { Write-SigningKeyNote (Add-SigningKey); Sync-App; docker compose up -d --remove-orphans --force-recreate; Stop-UnselectedApp; Wait-Ready; Wait-Editor }
+  'restart' { Write-SigningKeyNote (Add-SigningKey); Write-AppSigningKeyNote (Add-AppSigningKey); Sync-App; if (-not (Confirm-ReleaseVerified '.\tarleaks.ps1 restart')) { exit 1 }; docker compose up -d --remove-orphans --force-recreate; Stop-UnselectedApp; Wait-Ready; Wait-Editor }
   'status'  {
     docker compose ps --format 'table {{.Service}}\t{{.State}}\t{{.Status}}'
     try {
@@ -825,7 +889,7 @@ switch ($Command) {
     #    naming the current version until every image is on this computer.
     Add-NewKeys
     # Only the services the TARGET release runs for these apps: an app it does
-    # not have (taken out, like Diagram Studio in 1.2.0, or not there yet) is
+    # not have (taken out in that release, or not there yet) is
     # not downloaded, so it cannot stop the upgrade. .env follows after the
     # backup (Sync-App below), with a message naming what was left out.
     $savedAppsVersion = $script:AppsVersion; $script:AppsVersion = $v
@@ -842,7 +906,13 @@ switch ($Command) {
       [Environment]::SetEnvironmentVariable('TARLEAKS_VERSION', $v, 'Process')
       Use-MigrateImage $v
       $old = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
-      try { Invoke-Compose pull --quiet; $downloaded = ($LASTEXITCODE -eq 0) }
+      try {
+        Invoke-Compose pull --quiet; $downloaded = ($LASTEXITCODE -eq 0)
+        # Downloaded, but not signed by Tarleaks: never fall back to them (scripts\lib-signature.ps1).
+        if ($downloaded -and -not (Confirm-ReleaseImage ".\tarleaks.ps1 upgrade $v")) {
+          Die "Nothing was changed: .env still names $current, which keeps running."
+        }
+      }
       finally {
         $ErrorActionPreference = $old
         [Environment]::SetEnvironmentVariable('TARLEAKS_VERSION', $prev, 'Process')
@@ -855,6 +925,11 @@ switch ($Command) {
         Write-Host 'Not on this computer:'; $missing | ForEach-Object { Write-Host "  $_" }
         Die "Nothing was changed: .env still names $current. Load the offline bundle for $v (.\tarleaks.ps1 load-bundle <folder>), or fix the download, then run this again."
       }
+      # -Offline: refuse unchecked images, never check them online.
+      $prevV = $env:TARLEAKS_VERSION; $env:TARLEAKS_VERSION = $v; $prevND = $env:TARLEAKS_NO_DOWNLOAD
+      if ($Offline) { $env:TARLEAKS_NO_DOWNLOAD = '1' }
+      try { $checked = Confirm-ReleaseVerified ".\tarleaks.ps1 upgrade $v" } finally { $env:TARLEAKS_VERSION = $prevV; $env:TARLEAKS_NO_DOWNLOAD = $prevND }
+      if (-not $checked) { Die "Nothing was changed: .env still names $current, which keeps running." }
       Ok "Every image for $v is already on this computer"
     }
     [Environment]::SetEnvironmentVariable('COMPOSE_PROFILES', $prevProfiles, 'Process')
@@ -943,7 +1018,9 @@ switch ($Command) {
         # Also the way to finish an update that was interrupted after .env was
         # switched: start what is missing and run the (idempotent) database step.
         Write-Host "Already on ${to}: making sure everything runs and the database is up to date."
-        Write-SigningKeyNote (Add-SigningKey); Sync-App; docker compose up -d --remove-orphans
+        Write-SigningKeyNote (Add-SigningKey); Write-AppSigningKeyNote (Add-AppSigningKey); Sync-App
+        if (-not (Confirm-ReleaseVerified '.\tarleaks.ps1 update')) { exit 1 }
+        docker compose up -d --remove-orphans
         if ($LASTEXITCODE -ne 0) { Die "Starting $to failed (above). See: .\tarleaks.ps1 logs" }
         Stop-UnselectedApp
         Wait-Ready
@@ -999,10 +1076,44 @@ switch ($Command) {
     } finally { Remove-Item $lock -Recurse -Force -ErrorAction SilentlyContinue }
   }
   'backup'  {
+    if ($Scheduled) {
+      $Offsite = $true
+      New-Item -ItemType Directory -Force -Path (Join-Path $PSScriptRoot 'logs') | Out-Null
+      Start-Transcript -Path (Join-Path $PSScriptRoot 'logs/offsite-backup.log') -Append | Out-Null
+    }
+    # Check the off-site side BEFORE minutes of database work. A scheduled run
+    # still makes the local backup when it is not ready (a disk not plugged
+    # in, off-site turned off): a nightly backup must never stop silently.
+    $offsiteMissed = ''
+    if ($Offsite) {
+      if ($Scheduled) { try { Test-CloudReady } catch { $offsiteMissed = $_.Exception.Message; $Offsite = $false } }
+      else { Assert-CloudReady }
+    }
     $dir = if ($Argument) { $Argument } else { Join-Path 'backups' (Get-Date -Format 'yyyyMMdd-HHmmss') }
     if (-not (Invoke-Backup $dir)) { exit 1 }
+    if ($Offsite) {
+      Write-Host 'Making the encrypted off-site copy...'
+      $rc = Invoke-CloudSeal $dir
+      if ($rc -ne 0) { Warn "The local backup is in $dir; only the off-site copy is missing."; exit 1 }
+      if ($Scheduled) { Invoke-CloudAfterScheduledSeal }
+    } elseif ($offsiteMissed) {
+      Write-Host "  [x]  $offsiteMissed" -ForegroundColor Red
+      Write-Host "  [x]  No off-site copy tonight (above); the local backup is in $dir." -ForegroundColor Red
+      exit 1
+    }
+  }
+  'cloud' {
+    Invoke-CloudCommand $Argument $Rest $RecoveryKit -SameDisk:$SameDisk
   }
   'restore' {
+    $fromCloudDir = ''
+    if ($RecoveryKit -and -not $FromCloud) { Die '-RecoveryKit is for -FromCloud: .\tarleaks.ps1 restore -FromCloud [copy] -RecoveryKit <file>' }
+    if ($FromCloud) {
+      $fromCloudDir = Open-CloudCopyForRestore $Argument $RecoveryKit
+      $Argument = $fromCloudDir
+      Ok "The off-site copy is opened into $fromCloudDir and checked. Restoring it now."
+      Warn "$fromCloudDir holds your data UNENCRYPTED. It is removed when the restore finishes; if you cancel or the restore stops, delete it yourself: Remove-Item -Recurse -LiteralPath `"$fromCloudDir`""
+    }
     if (-not $Argument) { Die 'usage: .\tarleaks.ps1 restore <backup-folder> [-KeepSettings] [-NoSafetyBackup]   (the backups are in backups\)' }
     if ($Argument -eq '--no-safety-backup') { Die 'usage: .\tarleaks.ps1 restore <backup-folder> -NoSafetyBackup' }
     if ($Rest -contains '--no-safety-backup') { $NoSafetyBackup = $true }
@@ -1139,7 +1250,16 @@ rm -rf .tarleaks-restore-new .tarleaks-restore-old
     }
     $ErrorActionPreference = $old
     & $PSCommandPath start
+    $startRc = $LASTEXITCODE
     Ok "Restored from $dir"
+    if ($fromCloudDir -and $startRc -ne 0) {
+      Warn "The ERP did not start cleanly (above), so $fromCloudDir is kept for now. Delete it once all is well: Remove-Item -Recurse -LiteralPath `"$fromCloudDir`""
+    } elseif ($fromCloudDir) {
+      # The unencrypted copy is not needed any more: the data is restored and
+      # the encrypted copy is still off-site.
+      Remove-Item -LiteralPath $dir -Recurse -Force
+      Ok "Removed the unencrypted folder $fromCloudDir; the encrypted copy stays off-site."
+    }
     if ($safety) { Write-Host "  What was there before is in $safety (delete it when you no longer need it)." }
   }
   'uninstall' {
@@ -1184,6 +1304,64 @@ rm -rf .tarleaks-restore-new .tarleaks-restore-old
       default { Die 'The password was not reset: see the message above.' }
     }
   }
+  'sample-data' {
+    # From 1.2.0: the sample company's records (a fictional UAE or Saudi company,
+    # its people, books, stock, sales and more) loaded into a new company, and
+    # removed again exactly; your own records are never changed or deleted.
+    # Runs in the auth service, which must be running. docs\sample-data.md
+    if (-not (Test-Running 'auth')) { Die 'The ERP is not running. Start it first: .\tarleaks.ps1 start' }
+    # 'Continue' while a native command writes to stderr (Windows PowerShell 5.1
+    # turns redirected stderr into errors that 'Stop' would throw).
+    $old = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+    # -join, not Out-String: on Windows PowerShell 5.1 a stderr line is an error
+    # record, and -join keeps only its message.
+    $out = @(& docker compose exec -T auth /app/service sample-data modules 2>&1)
+    $probe = ($out | ForEach-Object { "$_" }) -join "`n"
+    $list = ($out | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] } | ForEach-Object { "$_" }) -join "`n"
+    $probeCode = $LASTEXITCODE
+    $ErrorActionPreference = $old
+    if ($probeCode -ne 0) {
+      if ($probe -match 'unknown subcommand') { Die 'This release does not have sample data yet (from 1.2.0). Update first (.\tarleaks.ps1 update), then run it again.' }
+      Write-Host $probe
+      Die 'The sample data could not be reached: see the message above.'
+    }
+    if ($Argument -ceq 'modules') { Write-Host $list.TrimEnd(); exit 0 }
+    if ($Argument -cnotin 'status', 'load', 'check', 'remove', 'resume') {
+      Write-Host 'Usage: .\tarleaks.ps1 sample-data status|load|check|remove|resume|modules [-Company <name>]'
+      Write-Host '  status [-Json]          where it stands'
+      Write-Host '  load -InstallPacks [-ForceNonempty]   load the sample into a new company (and its country packs)'
+      Write-Host '  check                   what would stop a removal'
+      Write-Host '  remove -Yes [-Adopt]    take it out again (back up first: .\tarleaks.ps1 backup)'
+      Write-Host '  resume [-InstallPacks]  go on after an interruption'
+      Write-Host 'See docs\sample-data.md.'
+      exit 2
+    }
+    $a = @('compose', 'exec', '-T', 'auth', '/app/service', 'sample-data', $Argument)
+    if ($Company) { $a += @('--workspace', $Company) }
+    if ($InstallPacks) { $a += '--install-packs' }
+    if ($Adopt) { $a += '--adopt' }
+    if ($Yes) { $a += '--yes' }
+    if ($Json) { $a += '--json' }
+    if ($ForceNonempty) { $a += '--force-nonempty' }
+    if ($Rest) { $a += $Rest }
+    $old = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+    & docker @a
+    $code = $LASTEXITCODE
+    $ErrorActionPreference = $old
+    switch ($code) {
+      0 { }
+      2 { Die 'That is not a sample-data option this release knows: .\tarleaks.ps1 sample-data shows the list.' }
+      default {
+        if ($Argument -ceq 'remove') { Die 'Nothing was removed: see the message above. .\tarleaks.ps1 sample-data check lists what blocks a removal; remove -Adopt -Yes keeps those records.' }
+        Die 'The sample data command stopped: see the message above. .\tarleaks.ps1 sample-data status says where it stands (resume goes on, remove -Yes takes it out).'
+      }
+    }
+  }
+  'migrate-from-cloud' {
+    # From 1.2.0: move a company from Tarleaks Cloud to this new installation
+    # (scripts\lib-move.ps1, docs\move-from-cloud.md). Ends with its own exit code.
+    Invoke-MoveFromCloud -Words (@($Argument) + @($Rest)) -SwitchOver:$SwitchOver -Resume:$Resume -Cancel:$Cancel -Status:$Status -Vendor $Vendor
+  }
   'setup-code' {
     $code = Get-EnvValue 'TARLEAKS_SETUP_CODE'
     if (-not $code) { $code = Get-EnvValue 'NEXUS_SETUP_CODE' }   # an .env from before the rename
@@ -1193,6 +1371,8 @@ rm -rf .tarleaks-restore-new .tarleaks-restore-old
     $preset = Get-AppPreset $Argument
     if (-not $preset) { Die 'usage: .\tarleaks.ps1 profile small|standard|full' }
     Set-ChosenApp $preset
+    # A larger profile adds apps: download (and check) their images first, like apps add.
+    if (-not (Invoke-AppPull ".\tarleaks.ps1 profile $Argument")) { exit 1 }
     docker compose up -d --remove-orphans; Stop-UnselectedApp; Wait-Ready; Wait-Editor
   }
   'editors' {
@@ -1208,6 +1388,7 @@ rm -rf .tarleaks-restore-new .tarleaks-restore-old
         Set-EnvValue 'TARLEAKS_EDITORS' $sub
         Sync-App
         if ($sub -eq 'on') { if (-not (Invoke-AppPull '.\tarleaks.ps1 editors on')) { exit 1 } }
+        elseif (-not (Confirm-ReleaseVerified '.\tarleaks.ps1 editors off')) { exit 1 }
         docker compose up -d --remove-orphans; Stop-UnselectedApp; Wait-Ready; Wait-Editor
         if ($sub -eq 'on') { Write-Host 'The editors are on. Documents: New and Edit; Diagrams: the editor.' -ForegroundColor Green }
         else { Write-Host 'The editors are off. Your documents and diagrams are kept; .\tarleaks.ps1 editors on brings the editors back.' -ForegroundColor Green }
@@ -1294,6 +1475,7 @@ rm -rf .tarleaks-restore-new .tarleaks-restore-old
           if ($by) { Die "Cannot remove $(Get-AppName $x): $(Get-AppName $by) needs it. Remove both: .\tarleaks.ps1 apps remove $x $($by -replace ',', ' ')" }
         }
         Set-ChosenApp $remaining
+        if (-not (Confirm-ReleaseVerified ".\tarleaks.ps1 apps remove $($Rest -join ' ')")) { exit 1 }
         docker compose up -d --remove-orphans
         Stop-UnselectedApp
         Wait-Ready
@@ -1317,6 +1499,8 @@ rm -rf .tarleaks-restore-new .tarleaks-restore-old
         if (Test-Path -LiteralPath $src -PathType Container) {
           Get-ChildItem -LiteralPath $src -Filter '*.images.txt' | ForEach-Object { Assert-Platform $_.FullName }
           foreach ($sums in Get-ChildItem -LiteralPath $src -Filter '*.SHA256SUMS') {
+            # beside the pieces: checked when its signature came along (the one inside the bundle always is)
+            if (Test-Path -LiteralPath "$($sums.FullName).sigstore.json") { Confirm-Signature $sums.FullName }
             Write-Host "Checking the downloaded files against $($sums.Name)..."
             if (-not (Test-Checksums $src $sums.FullName)) { Die 'A downloaded file is damaged or incomplete (above). Download it again.' }
             Ok 'Downloaded files intact'
@@ -1364,6 +1548,7 @@ rm -rf .tarleaks-restore-new .tarleaks-restore-old
       $sumsPath = Join-Path $dir 'SHA256SUMS'
       if (-not (Test-Path $sumsPath)) { Die "$sumsPath is missing: the bundle cannot be checked." }
       Assert-Platform (Join-Path $dir 'images.txt')
+      Confirm-Signature $sumsPath
       Write-Host 'Checking every image file against SHA256SUMS...'
       if (-not (Test-Checksums $dir $sumsPath)) { Die 'The bundle is damaged (above). Copy it again.' }
       Ok 'Bundle intact'
@@ -1378,6 +1563,8 @@ rm -rf .tarleaks-restore-new .tarleaks-restore-old
         # A bundle names its images where they were built; give them the name
         # this installation pulls (TARLEAKS_REGISTRY), so nothing is downloaded.
         Register-RegistryLoadedImage $loaded
+        # Loaded from a bundle whose signature was checked above: these images count as checked here.
+        if (-not ($AllowUnsigned -or $env:TARLEAKS_ALLOW_UNSIGNED -eq '1')) { if (-not (Register-SigLoadedImage $loaded)) { exit 1 } }
         $n++
       }
       if ($n -eq 0) { Die 'SHA256SUMS lists no files under images/: nothing to load.' }

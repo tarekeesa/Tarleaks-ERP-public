@@ -6,12 +6,13 @@
 # downloading would fail. An installation that ran a withdrawn app keeps its
 # data; the app is simply not started on that release.
 #
-# Diagram Studio is not part of the self-hosted edition from 1.2.0: it is
-# being rebuilt, and returns in a later release.
+# Diagram Studio (`diagrams`) is not listed: it is back, and exists in every
+# release this kit installs from 1.2.0-rc.3 on. (1.2.0-rc.1 and rc.2 left it out
+# while it was rebuilt; their images do not have it, so do not install them
+# with this revision.) The rewrite generates inside the `diagrams` image, so
+# there is no separate AI engine.
 #
 # app            first release   withdrawn in (optional; an editor of kind addon in apps.tsv counts as an app here)
 procurement      1.2.0
 construction     1.2.0
 contracts        1.2.0
-diagrams         1.0.0           1.2.0
-diagrams-engine  1.2.0           1.2.0

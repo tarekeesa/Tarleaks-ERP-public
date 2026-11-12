@@ -51,7 +51,7 @@ Later: `./tarleaks apps add payroll`, `./tarleaks apps remove crm`,
 |---|---|
 | `small` | HR, recruitment, attendance, payroll, accounting, CRM, inventory, sales orders, chat |
 | `standard` | `small` + projects, learning, recognition, assets, helpdesk, fleet, correspondence, point of sale, rentals, subscriptions (from release 1.2.0 also procurement, construction, contracts) |
-| `full` | `standard` + PDF tools with OCR, ISO compliance (and diagrams on 1.0.0; Diagram Studio is not in 1.2.0) |
+| `full` | `standard` + PDF tools with OCR, ISO compliance and diagrams |
 
 Every installation also runs Documents, Notifications, Activities, Parties,
 Reports and Insights, and the apps a chosen app needs (CRM brings Products &
@@ -162,6 +162,7 @@ Podman is not on the supported list.
 | Outbound | 443 (HTTPS) | `tarleaks.com` | The licence check-in, unless your licence key has check-ins switched off ([licensing.md](licensing.md)) |
 | Outbound | 443 (HTTPS) | `registry.tarleaks.com` (and `tarleaks.com`, which checks the licence key for it) | Downloading the Tarleaks images (install and upgrade), unless you use the offline bundle |
 | Outbound | 443 (HTTPS) | Docker Hub (`registry-1.docker.io`, `docker.io`, `production.cloudflare.docker.com`) | Downloading the database, cache, message queue, gateway, file-store and helper images, unless you use the offline bundle |
+| Outbound | 443 (HTTPS) | `ghcr.io`, `pkg-containers.githubusercontent.com` | Only when the server has no cosign 2.4+: Sigstore's cosign image, which checks that the Tarleaks images are signed by Tarleaks ([config/sigstore](../config/sigstore/README.md)) |
 | Outbound | 123 (UDP) | A time server | Correct time ([Time](#time)) and the check before e-invoices are signed |
 | Inbound | `HTTP_PORT` (80 by default) | Your users | Using the ERP |
 | Inbound | 80 and 443 | The internet | Only if you add HTTPS in front, see [examples/vps-https](../examples/vps-https/README.md) |

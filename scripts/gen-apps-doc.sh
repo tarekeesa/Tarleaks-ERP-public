@@ -103,10 +103,10 @@ cat <<'EOF'
   letter and contract templates in HR). Without it Documents still stores,
   previews, shares and downloads files, and says that editing is not part of this
   installation.
-- The diagram editor belongs to the Diagrams app, which runs on release 1.0.0
-  only: Diagram Studio is not in 1.2.0 while it is rebuilt, and neither the
-  editor nor its AI engine runs there.
-- `./tarleaks editors off` stops all three and gives their memory back;
+- The diagram editor belongs to the Diagrams app (Diagram Studio). Diagram Studio
+  draws with AI by itself, with the company's own AI settings, so there is no
+  separate engine to run.
+- `./tarleaks editors off` stops both and gives their memory back;
   `./tarleaks editors on` brings them back. Your documents and diagrams stay.
   More: [configuration.md](configuration.md#editors).
 

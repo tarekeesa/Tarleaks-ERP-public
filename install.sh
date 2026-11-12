@@ -25,6 +25,16 @@
 #                                      # --tls letsencrypt | cloudflare | proxy
 #                                      # (cloudflare reads CF_DNS_API_TOKEN from
 #                                      # the environment; docs/https.md)
+#   ./install.sh --from-cloud TLM-XXXXX-XXXXX-XXXXX-XXXXX
+#                                      # From 1.2.0: move a company from Tarleaks
+#                                      # Cloud to this new server instead of the
+#                                      # setup screen (code: Settings > Move
+#                                      # to your own server; docs/move-from-cloud.md)
+#   ./install.sh --from-cloud <code> --switch-over
+#                                      # the same, and switch over without asking
+#                                      # once everything is copied and checked
+#   ./install.sh --vendor https://…    # only to test against another Tarleaks
+#                                      # platform (default: tarleaks.com)
 #   ./install.sh --no-start            # write .env only
 #   COMPOSE_PROJECT_NAME=erp2 ./install.sh --port 8080
 #                                      # a SECOND installation on this machine
@@ -66,6 +76,9 @@ ACCEPT_TERMS=0
 PROFILE_ENV=""
 TLS=""
 ACME_EMAIL=""
+FROM_CLOUD=""
+SWITCH_OVER=0
+VENDOR=""
 
 usage() { sed -n '2,/^# ====/p' "$0" | sed 's/^# \{0,1\}//'; exit 0; }
 # An option that needs a value: say so plainly when it is missing.
@@ -89,6 +102,9 @@ while [ $# -gt 0 ]; do
     --profile-env) need "$@"; PROFILE_ENV=$2; shift 2 ;;
     --tls) need "$@"; TLS=$2; shift 2 ;;
     --acme-email) need "$@"; ACME_EMAIL=$2; shift 2 ;;
+    --from-cloud) need "$@"; FROM_CLOUD=$2; shift 2 ;;
+    --switch-over) SWITCH_OVER=1; shift ;;
+    --vendor) need "$@"; VENDOR=$2; shift 2 ;;
     -h|--help) usage ;;
     *) die "Unknown option: $1 (see ./install.sh --help)" ;;
   esac
@@ -118,6 +134,16 @@ case "$TLS" in ''|letsencrypt|cloudflare|proxy) ;; *) die "--tls must be letsenc
 if [ -n "$ACME_EMAIL" ]; then
   printf '%s' "$ACME_EMAIL" | grep -qE '^[^@[:space:]]+@[^@[:space:]]+[.][^@[:space:]]+$' || die "--acme-email needs an e-mail address"
 fi
+# A move from Tarleaks Cloud (docs/move-from-cloud.md).
+# shellcheck source=scripts/lib-move.sh
+. scripts/lib-move.sh
+if [ -n "$FROM_CLOUD" ] && ! move_code_valid "$FROM_CLOUD"; then
+  die "--from-cloud needs the move code, which looks like TLM-XXXXX-XXXXX-XXXXX-XXXXX: make it in the cloud workspace, Settings > Move to your own server."
+fi
+[ "$SWITCH_OVER" = 0 ] || [ -n "$FROM_CLOUD" ] || die "--switch-over goes with --from-cloud <code> (on an installed server: ./tarleaks migrate-from-cloud --switch-over)"
+if [ -n "$VENDOR" ] && ! move_vendor_valid "$VENDOR"; then
+  die "--vendor must be an address such as https://tarleaks.com (or default)."
+fi
 
 # The ERP's containers use the outbound proxy written in .env, never one this
 # shell happens to have (a proxy on 127.0.0.1 here is not reachable from inside
@@ -134,6 +160,10 @@ ask() { # ask "Question" default → answer
 
 say ""
 say "${B}Tarleaks ERP — installer${N}"
+if [ -n "$FROM_CLOUD" ]; then
+  say "Moving a company from Tarleaks Cloud: this sets up the server, then moves the company in"
+  say "(no setup screen). docs/move-from-cloud.md"
+fi
 say ""
 
 # ---- 1. The machine ---------------------------------------------------------
@@ -154,7 +184,7 @@ docker info >/dev/null 2>&1 || die "Docker is installed but not running (or this
 # for the person who runs it. Hand them back at the end (see the trap below).
 if [ "$(id -u)" = 0 ] && [ -n "${SUDO_UID:-}" ] && [ "${SUDO_UID}" != 0 ]; then
   warn "Running with sudo: the files this writes are given back to ${SUDO_USER:-uid $SUDO_UID} at the end. Next time, run it without sudo (your user must be in the docker group)."
-  trap 'chown "$SUDO_UID:$SUDO_GID" .env 2>/dev/null || true' EXIT
+  trap 'chown "$SUDO_UID:$SUDO_GID" .env .tarleaks-verified 2>/dev/null || true' EXIT
 fi
 docker compose version >/dev/null 2>&1 || die "Docker Compose v2 is missing ('docker compose'). Install the docker-compose-plugin package, or update Docker Desktop."
 compose_v=$(docker compose version --short 2>/dev/null || echo "?")
@@ -243,6 +273,10 @@ elif [ "$YES" = 1 ] || [ ! -t 0 ]; then APPS=$(apps_preset "$suggest")
 else
   say ""
   say "${B}Which apps do you want?${N} Only these run, with what they need."
+  if [ -n "$FROM_CLOUD" ]; then
+    say "  Choose at least the apps the company uses in Tarleaks Cloud. The data of an app left out"
+    say "  is moved too and kept; add the app later with ./tarleaks apps add <app>."
+  fi
   say "  1) small     HR, recruitment, attendance, payroll, accounting, CRM, inventory, sales orders, chat"
   say "  2) standard  small + projects, learning, recognition, assets, helpdesk, fleet, correspondence,"
   notyet=$(apps_not_yet); gone=$(apps_withdrawn)
@@ -578,8 +612,16 @@ fill HELPDESK_TOKEN_KEY b64_32
 fill SUBSCRIPTIONS_KEY_SEAL_KEY b64_32
 fill MARKETPLACE_TOKEN_KEY b64_32
 fill INSIGHTS_SOURCE_KEY b64_32
+fill INSIGHTS_VISITOR_HASH_KEY hex32
 fill PROCUREMENT_KEK b64_32
 fill CONTRACTS_PROVIDER_KEY b64_32
+fill ACTIVITIES_INVITE_SECRET hex32
+fill CORRESPONDENCE_MAILBOX_KEY b64_32
+fill CRM_EMAIL_TOKEN_KEY b64_32
+fill EINVOICE_SEAL_KEY b64_32
+fill PDFTOOLS_SIGN_KEY b64_32
+fill SOCIAL_TOKEN_KEY b64_32
+fill SSO_CREDENTIAL_KEY hex32
 fill ONLYOFFICE_JWT_SECRET hex32
 fill TARLEAKS_SETUP_CODE setup_code
 
@@ -606,7 +648,17 @@ set_env PG_EFFECTIVE_CACHE_SIZE "$pg_cache"
 [ -n "$VERSION" ] && [ "$START" = 0 ] && set_env TARLEAKS_VERSION "$VERSION"
 case "$LICENCE" in
   none) set_env TARLEAKS_LICENSE_KEY ""; ok "Licence key removed from .env" ;;
-  ?*) set_env TARLEAKS_LICENSE_KEY "$LICENCE" ;;
+  # A move brings the company's own licence, and a key in TARLEAKS_LICENSE_KEY
+  # would win over it: this one is only the download password.
+  ?*) if [ -n "$FROM_CLOUD" ]; then set_env TARLEAKS_DOWNLOAD_KEY "$LICENCE"
+      else set_env TARLEAKS_LICENSE_KEY "$LICENCE"; fi ;;
+esac
+# Only to test against another Tarleaks platform; empty = tarleaks.com.
+case "$VENDOR" in
+  '') ;;
+  default) [ -z "$(existing TARLEAKS_VENDOR_URL)" ] || { set_env TARLEAKS_VENDOR_URL ""; ok "Tarleaks Cloud is https://tarleaks.com again"; } ;;
+  *) set_env TARLEAKS_VENDOR_URL "${VENDOR%/}"
+     warn "Tarleaks Cloud is ${VENDOR%/} for this installation (TARLEAKS_VENDOR_URL in .env), for tests only." ;;
 esac
 sync_compose_files
 chmod 600 .env
@@ -620,7 +672,11 @@ if printf '%s\n' "$env_out" | grep -q '^ERROR '; then
   die "These settings do not fit together (above). Nothing was started; fix them and run ./install.sh again."
 fi
 
-[ "$START" = 1 ] || { say "Not starting (--no-start). Run ./tarleaks start when ready."; exit 0; }
+if [ "$START" = 0 ]; then
+  say "Not starting (--no-start). Run ./tarleaks start when ready."
+  [ -z "$FROM_CLOUD" ] || say "Then move the company in with the same code: ./tarleaks migrate-from-cloud <code>"
+  exit 0
+fi
 
 # ---- 5. Images ---------------------------------------------------------------
 # Every image the chosen profile runs (docker-compose.yml + .env), minus the
@@ -641,13 +697,17 @@ REGISTRY_CURL_PROXY=$shell_proxy
 if [ "$OFFLINE" = 0 ] && registry_takes_licence && [ -z "$(registry_licence_key)" ]; then
   say ""
   say "${B}A licence key is needed to download Tarleaks ERP${N} (it is also the download password)."
+  if [ -n "$FROM_CLOUD" ]; then
+    say "  The company's own licence comes with the move: the key or trial here is only used to download."
+  fi
   if [ -z "$TRIAL_EMAIL" ] && [ "$YES" = 0 ] && [ -t 0 ]; then
     say "  1) I have a licence key"
     say "  2) Start the free 30-day trial (your company name and e-mail address)"
     case "$(ask "1 or 2" "2")" in
       1) key=""; read -r -s -p "Paste the licence key (it is not shown): " key </dev/tty || true; say ""
          _reg_plausible_key "$key" || die "That does not look like a Tarleaks licence key: one line that starts with nxs1. Copy all of it again, then run ./install.sh --licence-key <key>."
-         set_env TARLEAKS_LICENSE_KEY "$key"; ok "Licence key saved in .env" ;;
+         if [ -n "$FROM_CLOUD" ]; then set_env TARLEAKS_DOWNLOAD_KEY "$key"; ok "Download key saved in .env"
+         else set_env TARLEAKS_LICENSE_KEY "$key"; ok "Licence key saved in .env"; fi ;;
       *) TRIAL_EMAIL=$(ask "Your e-mail address" "")
          printf '%s' "$TRIAL_EMAIL" | grep -qE '^[^@[:space:]]+@[^@[:space:]]+[.][^@[:space:]]+$' || die "\"$TRIAL_EMAIL\" is not an e-mail address. Run ./install.sh again."
          [ -n "$COMPANY" ] || COMPANY=$(ask "Your company name" "")
@@ -663,7 +723,8 @@ if [ "$OFFLINE" = 0 ] && registry_takes_licence && [ -z "$(registry_licence_key)
     _reg_plausible_key "$trial_key" || die "tarleaks.com did not send a usable trial key. Run ./install.sh again; if it keeps failing, contact info@tarleaks.com."
     set_env TARLEAKS_DOWNLOAD_KEY "$trial_key"
     chmod 600 .env
-    ok "Free trial started for $TRIAL_EMAIL. On the setup screen, choose the free trial with the same e-mail address."
+    if [ -n "$FROM_CLOUD" ]; then ok "Free trial started for $TRIAL_EMAIL, to download. The company keeps its own licence."
+    else ok "Free trial started for $TRIAL_EMAIL. On the setup screen, choose the free trial with the same e-mail address."; fi
   fi
 fi
 
@@ -692,7 +753,7 @@ say ""
 say "Downloading the images (the first time takes a few minutes)…"
 if [ -n "$VERSION" ]; then
   TARLEAKS_VERSION="$VERSION" TARLEAKS_NO_DOWNLOAD=$OFFLINE apps_pull "./install.sh --version $VERSION" \
-    || die "Nothing was started; .env still names $(existing TARLEAKS_VERSION). Check the version number (the release notes list them)."
+    || die "Nothing was started; .env still names $(existing TARLEAKS_VERSION). Fix what is named above (a release number that does not exist: the release notes list them)."
   set_env TARLEAKS_VERSION "$VERSION"
 else
   TARLEAKS_NO_DOWNLOAD=$OFFLINE apps_pull ./install.sh || exit 1
@@ -704,6 +765,7 @@ if [ "$OFFLINE" = 1 ]; then downloaded=0; ok "Every image is on this machine"; e
 # The sign-in token key, once: after the images, so the message-queue image's
 # openssl can make it where this machine's cannot (macOS, no openssl).
 env_signing_keys_note "$(env_fill_signing_keys)"
+env_app_signing_keys_note "$(env_fill_app_signing_keys)"
 docker compose up -d --remove-orphans
 apps_stop_unselected
 say ""
@@ -735,27 +797,49 @@ if [ "$EDITORS" = on ] && case ",$(existing COMPOSE_PROFILES)," in *,onlyoffice,
   else warn "The document editor is still starting. New and Edit in Documents work once it is up. See: ./tarleaks doctor   and   ./tarleaks logs onlyoffice"; fi
 fi
 
-code=$(existing TARLEAKS_SETUP_CODE)
-say ""
-say "${B}Open ${URL} in your browser.${N}"
-say "  Setup code: ${B}${code}${N}"
-say "  You will name your company, create the first administrator and start the"
-if [ "$downloaded" = 1 ]; then
-  say "  30-day free trial (or enter a licence key)."
+if [ -n "$FROM_CLOUD" ]; then
+  # No setup screen: the company, its people and settings come from the cloud.
+  # ./tarleaks does the move, so it can be watched again or resumed there.
+  if [ -n "$shell_proxy" ] && [ -z "$(existing HTTPS_PROXY)" ]; then
+    say ""
+    warn "This shell uses a proxy ($shell_proxy) but .env sets none, so the ERP reaches Tarleaks Cloud directly. If it needs the proxy, add HTTPS_PROXY=… to .env, run ./tarleaks restart, then ./tarleaks migrate-from-cloud <code> (docs/configuration.md#outbound-proxy)."
+  fi
+  say ""
+  say "${B}Moving the company from Tarleaks Cloud${N}"
+  move_rc=0
+  if [ "$SWITCH_OVER" = 1 ]; then bash ./tarleaks migrate-from-cloud "$FROM_CLOUD" --switch-over || move_rc=$?
+  elif [ "$YES" = 1 ]; then bash ./tarleaks migrate-from-cloud "$FROM_CLOUD" </dev/null || move_rc=$?   # --yes asks nothing
+  else bash ./tarleaks migrate-from-cloud "$FROM_CLOUD" || move_rc=$?; fi
+  [ "$move_rc" != 130 ] || exit 130   # Ctrl+C: the move goes on (./tarleaks said how to watch it)
+  if [ "$move_rc" != 0 ]; then
+    say ""
+    warn "Tarleaks ERP is installed and running, but the move did not finish (above). Nothing needs installing again; ./tarleaks migrate-from-cloud --status shows where it stands."
+    exit "$move_rc"
+  fi
+  say ""
 else
-  say "  licence: with no internet, enter a licence key (the trial needs internet)."
+  code=$(existing TARLEAKS_SETUP_CODE)
+  say ""
+  say "${B}Open ${URL} in your browser.${N}"
+  say "  Setup code: ${B}${code}${N}"
+  say "  You will name your company, create the first administrator and start the"
+  if [ "$downloaded" = 1 ]; then
+    say "  30-day free trial (or enter a licence key)."
+  else
+    say "  licence: with no internet, enter a licence key (the trial needs internet)."
+  fi
+  say ""
+  say "  E-mail (invitations, password resets): after setup, Settings, Notifications,"
+  say "  Custom SMTP (your mail server)."
+  say "  Until it is set, give people their first password yourself."
+  say ""
 fi
-say ""
-say "  E-mail (invitations, password resets): after setup, Settings, Notifications,"
-say "  Custom SMTP (your mail server)."
-say "  Until it is set, give people their first password yourself."
-say ""
 say "  ./tarleaks status     what is running"
 say "  ./tarleaks stop       stop everything (your data stays)"
 say "  ./tarleaks backup     back up the database, files and .env"
 say "  ./tarleaks upgrade    move to a newer version"
 say ""
-if [ "$downloaded" = 1 ]; then
+if [ "$downloaded" = 1 ] || [ -n "$FROM_CLOUD" ]; then
   say "The ERP checks its licence with tarleaks.com about every 6 hours and needs"
   say "to reach it at least once a day. Allow outbound HTTPS to tarleaks.com"
   say "(directly, or through HTTPS_PROXY in .env)."
@@ -780,7 +864,7 @@ if [ "$YES" = 0 ] && [ -t 0 ] && command -v crontab >/dev/null 2>&1 \
     *) say "  No nightly backup. Set one up later: examples/scheduled-backups" ;;
   esac
 fi
-if [ -n "$shell_proxy" ] && [ -z "$(existing HTTPS_PROXY)" ]; then
+if [ -z "$FROM_CLOUD" ] && [ -n "$shell_proxy" ] && [ -z "$(existing HTTPS_PROXY)" ]; then
   say ""
   warn "This shell uses a proxy ($shell_proxy) but .env sets none, so the ERP connects directly. If the ERP needs it too, add HTTPS_PROXY=… to .env and run ./tarleaks restart (docs/configuration.md#outbound-proxy)."
 fi

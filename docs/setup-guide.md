@@ -103,6 +103,7 @@ The machine needs to reach these **outbound** over HTTPS (port 443):
 | `registry.tarleaks.com` | The Tarleaks ERP images (signed in with your licence key) | Install and upgrade |
 | `registry-1.docker.io`, `auth.docker.io`, `production.cloudflare.docker.com` | Database, queue, gateway and file-store images | Install and upgrade |
 | `github.com` | `git clone` of this kit | Install and upgrade |
+| `ghcr.io`, `pkg-containers.githubusercontent.com` | Sigstore's cosign image, which checks that the Tarleaks images are signed by Tarleaks; not needed when cosign 2.4+ is installed on the machine | Install and upgrade |
 
 **Inbound**: only the port people use to open the ERP (80 by default, or 443
 behind your HTTPS proxy). Nothing else needs to be open.
@@ -239,6 +240,11 @@ next check-in.
 | "That setup code is not right" | `./tarleaks setup-code`, copy it again |
 | "We could not reach tarleaks.com" | Step 3 for `tarleaks.com`; or use a licence key |
 | "tarleaks.com did not start a trial" | The message says why (one trial per e-mail address); ask info@tarleaks.com for a key |
+
+**From 1.2.0, to try it first:** `./tarleaks sample-data load --install-packs`
+fills the new company with a fictional one (people, books, stock, sales and
+more), and `./tarleaks sample-data remove --yes` takes it out again exactly.
+Back up first. See [sample-data.md](sample-data.md).
 
 ## 7. Make it safe to rely on
 

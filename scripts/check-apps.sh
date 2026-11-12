@@ -67,8 +67,7 @@ done
 
 # 3. Gateway: every unit that answers HTTP has a backend in routes.yml.
 while read -r app kind unit _rest; do
-  # The Diagrams AI engine is called by the diagrams service inside Docker only.
-  case "$unit" in postgres|redis|rabbitmq|objects|gateway|authproxy|web|diagrams-engine) continue ;; esac
+  case "$unit" in postgres|redis|rabbitmq|objects|gateway|authproxy|web) continue ;; esac
   grep -qE "^    $unit:\$" <(sed -n '/^  services:/,$p' config/traefik/dynamic/routes.yml) \
     || bad "$app: the gateway has no service '$unit' in config/traefik/dynamic/routes.yml"
 done <<<"$rows"
@@ -126,15 +125,15 @@ for p in small standard full; do
   ( APPS_VERSION=1.0.0; apps_resolve "$list" >/dev/null ) || bad "preset $p does not resolve on release 1.0.0"
 done
 ( APPS_VERSION=1.0.0; apps_resolve procurement >/dev/null 2>&1 ) && bad "release 1.0.0 accepted procurement, whose image it does not have"
-# Diagram Studio is withdrawn from 1.2.0: 1.0.0 keeps
-# it, 1.2.0 refuses it by name and no 1.2.0 preset or editor list brings it.
+# Diagram Studio is back: no row in app-releases.tsv, so every release accepts
+# it by name and the full preset (and its editor list) brings it.
 ( APPS_VERSION=1.0.0; apps_resolve diagrams >/dev/null ) || bad "release 1.0.0 refused diagrams, which it has"
-( APPS_VERSION=1.2.0; apps_resolve diagrams >/dev/null 2>&1 ) && bad "release 1.2.0 accepted diagrams, which is withdrawn in it"
-for p in small standard full; do
-  case ",$(APPS_VERSION=1.2.0 apps_preset "$p")," in *",diagrams,"*) bad "preset $p keeps diagrams on release 1.2.0" ;; esac
+( APPS_VERSION=1.2.0; apps_resolve diagrams >/dev/null 2>&1 ) || bad "release 1.2.0 refused diagrams, which it has again"
+for v in 1.0.0 1.2.0; do
+  case ",$(APPS_VERSION=$v apps_preset full)," in *",diagrams,"*) ;; *) bad "preset full lacks diagrams on release $v" ;; esac
 done
 
-# 6. The document editor runs the release's own image (Arabic fonts, QA D3),
+# 6. The document editor runs the release's own image (Arabic fonts),
 #    and the pin an older release falls back to is the one compose names.
 grep -qE 'onlyoffice:\$\{TARLEAKS_VERSION' docker-compose.yml \
   || bad "docker-compose.yml: the onlyoffice service must default to the release's own image (<registry>/onlyoffice:\${TARLEAKS_VERSION})"

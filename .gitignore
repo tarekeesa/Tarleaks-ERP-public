@@ -21,3 +21,12 @@ Thumbs.db
 # An unpacked offline bundle (./tarleaks load-bundle removes it when done).
 .bundle-*/
 .tarleaks-update.lock/
+
+# Off-site backups: the recovery kit (it opens every off-site copy), the
+# server's backup keys and the scheduled run's log. Never commit them.
+recovery-kit-*.txt
+.tarleaks/
+logs/
+
+# Which images this machine checked for the Tarleaks signature (scripts/lib-signature.sh).
+.tarleaks-verified*

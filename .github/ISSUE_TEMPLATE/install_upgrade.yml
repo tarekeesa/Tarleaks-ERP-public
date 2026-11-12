@@ -1,0 +1,70 @@
+name: Install or upgrade problem
+description: The installer, `./tarleaks update`, an offline bundle or a start-up does not work.
+title: "[Install]: "
+labels: ["install", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please check [docs/troubleshooting.md](https://github.com/tarekeesa/Tarleaks-ERP/blob/main/docs/troubleshooting.md) first. Do **not**
+        include passwords, licence keys, the setup code or `.env` contents.
+  - type: dropdown
+    id: what
+    attributes:
+      label: What were you doing?
+      options:
+        - First installation (online)
+        - First installation (offline bundle)
+        - Upgrade with ./tarleaks update
+        - Starting or restarting an installation
+        - Restoring a backup
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: from_to
+    attributes:
+      label: Versions
+      description: The version you installed, or "from → to" for an upgrade.
+      placeholder: 1.2.0-rc.2 → 1.2.0-rc.3
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Server
+      options:
+        - Linux (x86_64)
+        - Linux (arm64)
+        - Windows (Docker Desktop / WSL 2)
+        - macOS (Docker Desktop)
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: docker
+    attributes:
+      label: Docker version
+      description: Output of `docker version --format '{{.Server.Version}}'` and `docker compose version`.
+    validations:
+      required: true
+  - type: textarea
+    id: command
+    attributes:
+      label: Command you ran and its output
+      description: The full command and the last lines of its output.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: Output of `./tarleaks doctor`
+      render: text
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before you submit
+      options:
+        - label: I removed passwords, keys, the setup code and any personal or customer data from this report.
+          required: true

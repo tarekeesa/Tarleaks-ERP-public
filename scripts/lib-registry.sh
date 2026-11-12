@@ -44,7 +44,14 @@ REGISTRY_LICENCE_HOSTS="registry.tarleaks.com"
 REGISTRY_USER=licence
 REGISTRY_SIGNED_IN=""
 
-_reg_env() { [ -f .env ] && grep -E "^$1=" .env | tail -1 | cut -d= -f2- || true; }
+# A .env value as docker compose reads it: no carriage return, no surrounding quotes.
+_reg_env() {
+  local v
+  [ -f .env ] || return 0
+  v=$(grep -E "^$1=" .env | tail -1 | cut -d= -f2- | tr -d '\r') || true
+  case "$v" in \"*\") v=${v#\"}; v=${v%\"} ;; \'*\') v=${v#\'}; v=${v%\'} ;; esac
+  printf '%s' "$v"
+}
 
 _reg_set_env() { # key value — replace or append, keep everything else
   local tmp; tmp=$(mktemp)
